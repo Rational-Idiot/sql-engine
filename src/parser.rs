@@ -1,7 +1,7 @@
 use std::fmt;
 
 use crate::{
-    ast::{SelectStmt, SetQuantifier, Stmt},
+    ast::{Expr, Ident, SelectItem, SelectStmt, SetQuantifier, Stmt},
     lex::Token,
 };
 
@@ -72,6 +72,28 @@ impl Parser {
         }
     }
 
+    fn expect_ident(&mut self) -> Result<Ident> {
+        match self.advance() {
+            Token::Id(s) => Ok(Ident(s)),
+            got => Err(ParseError::UnexpectedToken {
+                got,
+                expected: "Identifier",
+            }),
+        }
+    }
+
+    fn comma_sep<T, F>(&mut self, mut f: F) -> Result<Vec<T>>
+    where
+        F: FnMut(&mut Self) -> Result<T>,
+    {
+        let first = f(self)?;
+        let mut o = vec![first];
+        while self.eat(&Token::Comma) {
+            o.push(f(self)?);
+        }
+        Ok(o)
+    }
+
     pub fn parse(&mut self) -> Result<Stmt> {
         let s = self.parse_stmt()?;
         self.eat(&Token::Semicolon);
@@ -95,9 +117,44 @@ impl Parser {
         let q = if self.eat(&Token::Distinct) {
             SetQuantifier::Distinct
         } else {
+            self.eat(&Token::All);
             SetQuantifier::All
         };
 
+        let col = self.parse_sel_list()?;
+
+        todo!()
+    }
+
+    fn parse_sel_list(&mut self) -> Result<Vec<SelectItem>> {
+        self.comma_sep(|p| {
+            if p.peek() == &Token::Star {
+                p.advance();
+                return Ok(SelectItem {
+                    expr: Expr::Glob,
+                    alias: None,
+                });
+            }
+
+            let expr = p.parse_expr(0)?;
+            let alias = p.parse_alias()?;
+            Ok(SelectItem { expr, alias })
+        })
+    }
+
+    fn parse_alias(&mut self) -> Result<Option<Ident>> {
+        if self.eat(&Token::As) {
+            return Ok(Some(self.expect_ident()?));
+        }
+
+        if let Token::Id(_) = self.peek() {
+            return Ok(Some(self.expect_ident()?));
+        }
+
+        Ok(None)
+    }
+
+    fn parse_expr(&mut self, min_bp: u8) -> Result<Expr> {
         todo!()
     }
 }
