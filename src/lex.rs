@@ -1,3 +1,6 @@
+use std::collections::HashMap;
+use std::sync::OnceLock;
+
 pub struct Lex {
     input: Vec<char>,
     pos: usize,
@@ -92,6 +95,89 @@ pub enum Token {
     String(String),
 
     EOF,
+}
+
+static KEYWORDS: OnceLock<HashMap<&'static str, Token>> = OnceLock::new();
+
+fn keyword_map() -> &'static HashMap<&'static str, Token> {
+    KEYWORDS.get_or_init(|| {
+        let mut m = HashMap::new();
+        m.insert("SELECT", Token::Select);
+        m.insert("TABLE", Token::Table);
+        m.insert("INSERT", Token::Table);
+        m.insert("INTO", Token::Into);
+        m.insert("FROM", Token::From);
+        m.insert("WHERE", Token::Where);
+
+        m.insert("DELETE", Token::Delete);
+        m.insert("DROP", Token::Drop);
+
+        m.insert("UPDATE", Token::Update);
+        m.insert("SET", Token::Set);
+        m.insert("DISTINCT", Token::Distinct);
+        m.insert("ALL", Token::All);
+
+        m.insert("CREATE", Token::Create);
+        m.insert("VALUES", Token::Values);
+        m.insert("NULL", Token::Null);
+
+        m.insert("AND", Token::And);
+        m.insert("OR", Token::Or);
+        m.insert("NOT", Token::Not);
+
+        m.insert("AS", Token::As);
+        m.insert("IS", Token::Is);
+        m.insert("BETWEEN", Token::Between);
+        m.insert("IN", Token::In);
+        m.insert("LIKE", Token::Like);
+        m.insert("ILIKE", Token::Ilike);
+        m.insert("EXISTS", Token::Exists);
+        m.insert("CAST", Token::Cast);
+        m.insert("FILTER", Token::Filter);
+        m.insert("IF", Token::If);
+
+        m.insert("JOIN", Token::Join);
+        m.insert("INNER", Token::Inner);
+        m.insert("OUTER", Token::Outer);
+        m.insert("LEFT", Token::Left);
+        m.insert("RIGHT", Token::Right);
+        m.insert("NATURAL", Token::Natural);
+        m.insert("FULL", Token::Full);
+        m.insert("CROSS", Token::Cross);
+        m.insert("ON", Token::On);
+        m.insert("USING", Token::Using);
+
+        m.insert("ORDER", Token::Order);
+        m.insert("BY", Token::By);
+        m.insert("GROUP", Token::Group);
+        m.insert("HAVING", Token::Having);
+        m.insert("LIMIT", Token::Limit);
+        m.insert("OFFSET", Token::Offset);
+        m.insert("ASC", Token::Asc);
+        m.insert("DESC", Token::Desc);
+        m.insert("NULLS", Token::Nulls);
+        m.insert("FIRST", Token::First);
+        m.insert("LAST", Token::Last);
+
+        m.insert("PRIMARY", Token::Primary);
+        m.insert("KEY", Token::Key);
+        m.insert("UNIQUE", Token::Unique);
+        m.insert("DEFAULT", Token::Defualt);
+
+        m.insert("INT", Token::Integer);
+        m.insert("INTEGER", Token::Integer);
+        m.insert("FLOAT", Token::Float);
+        m.insert("REAL", Token::Float);
+        m.insert("DOUBLE", Token::Float);
+        m.insert("BOOL", Token::Bool);
+        m.insert("BOOLEAN", Token::Bool);
+        m.insert("TEXT", Token::Text);
+        m.insert("STRING", Token::Text);
+        m.insert("CHAR", Token::Text);
+        m.insert("VARCHAR", Token::Text);
+
+        m
+    })
 }
 
 impl Lex {
@@ -213,7 +299,7 @@ impl Lex {
 
                 c if c.is_ascii_alphabetic() || c == '_' => {
                     let s = self.eat_while(|c| c.is_alphanumeric() || c == '_');
-                    return Ok(Self::extract_keyword(s));
+                    return Ok(Self::extract_keyword(s.as_str()));
                 }
 
                 _ => return Err(format!("Unexpected Character: {}", c)),
@@ -222,78 +308,13 @@ impl Lex {
         Ok(Token::EOF)
     }
 
-    pub fn extract_keyword(s: String) -> Token {
-        match s.to_ascii_uppercase().as_str() {
-            "SELECT" => Token::Select,
-            "TABLE" => Token::Table,
-            "INSERT" => Token::Insert,
-            "INTO" => Token::Into,
-            "FROM" => Token::From,
-            "WHERE" => Token::Where,
+    pub fn extract_keyword(s: &str) -> Token {
+        let upper = s.to_ascii_uppercase();
 
-            "DELETE" => Token::Delete,
-            "DROP" => Token::Drop,
-
-            "UPDATE" => Token::Update,
-            "SET" => Token::Set,
-            "DISTINCT" => Token::Distinct,
-            "ALL" => Token::All,
-
-            "CREATE" => Token::Create,
-            "VALUES" => Token::Values,
-            "NULL" => Token::Null,
-
-            "AND" => Token::And,
-            "OR" => Token::Or,
-            "NOT" => Token::Not,
-
-            "AS" => Token::As,
-            "IS" => Token::Is,
-            "BETWEEN" => Token::Between,
-            "IN" => Token::In,
-
-            "LIKE" => Token::Like,
-            "ILIKE" => Token::Ilike,
-            "EXISTS" => Token::Exists,
-            "CAST" => Token::Cast,
-            "FILTER" => Token::Filter,
-            "IF" => Token::If,
-
-            "JOIN" => Token::Join,
-            "INNER" => Token::Inner,
-            "OUTER" => Token::Outer,
-            "LEFT" => Token::Left,
-            "RIGHT" => Token::Right,
-            "NATURAL" => Token::Natural,
-            "FULL" => Token::Full,
-            "CROSS" => Token::Cross,
-            "ON" => Token::On,
-            "USING" => Token::Using,
-
-            "ORDER" => Token::Order,
-            "BY" => Token::By,
-            "GROUP" => Token::Group,
-            "HAVING" => Token::Having,
-            "LIMIT" => Token::Limit,
-            "OFFSET" => Token::Offset,
-            "ASC" => Token::Asc,
-            "DESC" => Token::Desc,
-            "NULLS" => Token::Nulls,
-            "FIRST" => Token::First,
-            "LAST" => Token::Last,
-
-            "PRIMARY" => Token::Primary,
-            "KEY" => Token::Key,
-            "UNIQUE" => Token::Unique,
-            "DEFAULT" => Token::Defualt,
-
-            "INT" | "INTEGER" => Token::Integer,
-            "FLOAT" | "REAL" | "DOUBLE" => Token::Float,
-            "BOOL" | "BOOLEAN" => Token::Bool,
-            "TEXT" | "STRING" | "CHAR" | "VARCHAR" => Token::Text,
-
-            _ => Token::Id(s.to_string()),
-        }
+        keyword_map()
+            .get(upper.as_str())
+            .cloned()
+            .unwrap_or(Token::Id(s.to_string()))
     }
 }
 
