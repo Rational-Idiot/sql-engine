@@ -1,7 +1,7 @@
 use std::fmt;
 
 use crate::{
-    ast::{Expr, Ident, SelectItem, SelectStmt, SetQuantifier, Stmt},
+    ast::{Expr, Ident, Order, SelectItem, SelectStmt, SetQuantifier, SortType, Stmt, TableRef},
     lex::Token,
 };
 
@@ -14,6 +14,7 @@ pub struct Parser {
 pub enum ParseError {
     UnexpectedToken { got: Token, expected: &'static str },
     UnexpectedEOF,
+    InvalidInteger(String),
 }
 
 impl fmt::Display for ParseError {
@@ -23,6 +24,7 @@ impl fmt::Display for ParseError {
                 write!(f, "Expected: {expected}, Got: {got}")
             }
             Self::UnexpectedEOF => write!(f, "Unexpected End of Input"),
+            Self::InvalidInteger(s) => write!(f, "Cannot parse {s:?} as an Integer"),
         }
     }
 }
@@ -82,6 +84,16 @@ impl Parser {
         }
     }
 
+    fn expect_num(&mut self) -> Result<u64> {
+        match self.advance() {
+            Token::Number(n) => n.parse().map_err(|_| ParseError::InvalidInteger(n)),
+            got => Err(ParseError::UnexpectedToken {
+                got,
+                expected: "Integer Literal",
+            }),
+        }
+    }
+
     fn comma_sep<T, F>(&mut self, mut f: F) -> Result<Vec<T>>
     where
         F: FnMut(&mut Self) -> Result<T>,
@@ -114,7 +126,7 @@ impl Parser {
     fn parse_select(&mut self) -> Result<SelectStmt> {
         self.expect(&Token::Select)?;
 
-        let q = if self.eat(&Token::Distinct) {
+        let quantifier = if self.eat(&Token::Distinct) {
             SetQuantifier::Distinct
         } else {
             self.eat(&Token::All);
@@ -122,8 +134,79 @@ impl Parser {
         };
 
         let col = self.parse_sel_list()?;
+        let from = if self.eat(&Token::From) {
+            Some(self.parse_table()?)
+        } else {
+            None
+        };
 
-        todo!()
+        let where_clause = if self.eat(&Token::Where) {
+            Some(self.parse_expr(0)?)
+        } else {
+            None
+        };
+
+        let group_by = if self.eat(&Token::Group) {
+            self.expect(&Token::By)?;
+            self.comma_sep(|p| p.parse_expr(0))?
+        } else {
+            vec![]
+        };
+
+        let having = if self.eat(&Token::Having) {
+            Some(self.parse_expr(0)?)
+        } else {
+            None
+        };
+
+        let order_by = if self.eat(&Token::Order) {
+            self.expect(&Token::By)?;
+            self.comma_sep(Self::parse_order)?
+        } else {
+            vec![]
+        };
+
+        let limit = if self.eat(&Token::Limit) {
+            Some(self.expect_num()?)
+        } else {
+            None
+        };
+
+        let offset = if self.eat(&Token::Offset) {
+            Some(self.expect_num()?)
+        } else {
+            None
+        };
+
+        Ok(SelectStmt {
+            col,
+            quantifier,
+            from,
+            where_clause,
+            group_by,
+            having,
+            order_by,
+            limit,
+            offset,
+        })
+    }
+
+    fn parse_order(&mut self) -> Result<Order> {
+        let expr = self.parse_expr(0)?;
+        let dir = if self.eat(&Token::Desc) {
+            SortType::Desc
+        } else {
+            self.eat(&Token::Asc);
+            SortType::Asc
+        };
+
+        Ok(Order { expr, dir })
+    }
+
+    fn parse_table(&mut self) -> Result<TableRef> {
+        let name = self.expect_ident()?;
+        let alias = self.parse_alias()?;
+        Ok(TableRef::Named { name, alias })
     }
 
     fn parse_sel_list(&mut self) -> Result<Vec<SelectItem>> {
@@ -193,5 +276,50 @@ fn token_desc(t: &Token) -> &'static str {
         Token::Equal => "=",
         Token::EOF => "end of input",
         _ => "token",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        ast::{Expr, Ident, SelectItem, SelectStmt, SetQuantifier, Stmt, TableRef},
+        lex::{Lex, Token},
+        parser::Parser,
+    };
+
+    #[test]
+    fn parse_select_statement() {
+        let mut lexer = Lex::new();
+        lexer.input = "SELECT * FROM gay".chars().collect();
+
+        let tokens: Vec<Token> = lexer
+            .map(|t| t.unwrap())
+            .take_while(|t| *t != Token::EOF)
+            .chain(std::iter::once(Token::EOF))
+            .collect();
+
+        let mut parser = Parser::new(tokens);
+        let stmt = parser.parse().unwrap();
+
+        assert_eq!(
+            stmt,
+            Stmt::Select(SelectStmt {
+                col: vec![SelectItem {
+                    expr: Expr::Glob,
+                    alias: None,
+                }],
+                quantifier: SetQuantifier::All,
+                from: Some(TableRef::Named {
+                    name: Ident("gay".to_string()),
+                    alias: None,
+                }),
+                where_clause: None,
+                group_by: vec![],
+                having: None,
+                order_by: vec![],
+                limit: None,
+                offset: None,
+            })
+        );
     }
 }

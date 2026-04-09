@@ -1,4 +1,5 @@
 #![allow(dead_code)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum Stmt {
     Select(SelectStmt),
     Insert(InsertStmt),
@@ -8,62 +9,72 @@ pub enum Stmt {
     Drop(DropStmt),
 }
 
+#[derive(Debug, PartialEq, Eq)]
 pub struct SelectStmt {
-    columns: Vec<SelectItem>,
-    quantifier: SetQuantifier,
-    from: Option<TableRef>,
-    joins: Vec<JoinClause>,
-    where_clause: Option<Expr>,
-    group_by: Vec<Expr>,
-    having: Option<Expr>,
-    order_by: Vec<Order>,
-    limit: Option<u64>,
-    offset: Option<u64>,
+    pub col: Vec<SelectItem>,
+    pub quantifier: SetQuantifier,
+    pub from: Option<TableRef>,
+    // joins: Vec<JoinClause>,
+    pub where_clause: Option<Expr>,
+    pub group_by: Vec<Expr>,
+    pub having: Option<Expr>,
+    pub order_by: Vec<Order>,
+    pub limit: Option<u64>,
+    pub offset: Option<u64>,
 }
 
+#[derive(Debug, PartialEq, Eq)]
 pub struct InsertStmt {
     table: Ident,
     columns: Vec<Ident>, // empty => All
     source: InsertSource,
 }
 
+#[derive(Debug, PartialEq, Eq)]
 pub enum InsertSource {
     Values(Vec<Vec<Expr>>),
     Select(Box<SelectStmt>),
 }
 
+#[derive(Debug, PartialEq, Eq)]
 pub struct UpdateStmt {
     table: TableRef,
     assign: Vec<Assignment>,
     where_clause: Option<Expr>,
 }
 
+#[derive(Debug, PartialEq, Eq)]
 pub struct Assignment {
     column: Ident,
     value: Expr,
 }
 
+#[derive(Debug, PartialEq, Eq)]
 pub struct DeleteStmt {
     table: TableRef,
     where_clause: Option<Expr>,
 }
 
+#[derive(Debug, PartialEq, Eq)]
 pub enum CreateStmt {
     Table(CreateTableStmt),
 }
 
+#[derive(Debug, PartialEq, Eq)]
 pub struct CreateTableStmt {
     name: Ident,
     columns: Vec<ColumnDef>,
     flag: bool, //If not exists clause
 }
 
+#[derive(Debug, PartialEq, Eq)]
 pub struct ColumnDef {
     name: Ident,
     data_type: DataType,
     constraints: Vec<ColumnConstraint>,
 }
 
+#[derive(Debug, PartialEq, Eq)]
 pub enum DataType {
     Integer,
     Float,
@@ -71,6 +82,7 @@ pub enum DataType {
     String,
 }
 
+#[derive(Debug, PartialEq, Eq)]
 pub enum ColumnConstraint {
     PrimaryKey,
     NotNull,
@@ -78,6 +90,7 @@ pub enum ColumnConstraint {
     Default(Expr),
 }
 
+#[derive(Debug, PartialEq, Eq)]
 pub enum DropStmt {
     Table { name: Ident, if_exists: bool },
     //TODO: Index, View
@@ -86,28 +99,33 @@ pub enum DropStmt {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Ident(pub String);
 
+#[derive(Debug, PartialEq, Eq)]
 pub struct Order {
-    expr: Expr,
-    direction: SortType,
-    nulls: NullOrdering,
+    pub expr: Expr,
+    pub dir: SortType,
+    // nulls: NullOrdering,
 }
 
+#[derive(Debug, PartialEq, Eq)]
 pub enum SortType {
     Asc,
     Desc,
 }
 
+#[derive(Debug, PartialEq, Eq)]
 pub enum NullOrdering {
     First,
     Last,
     Default,
 }
 
+#[derive(Debug, PartialEq, Eq)]
 pub enum SetQuantifier {
     All,
     Distinct,
 }
 
+#[derive(Debug, PartialEq, Eq)]
 pub enum TableRef {
     Named {
         name: Ident,
@@ -120,17 +138,20 @@ pub enum TableRef {
     //TODO: TableFunction{name, args, alias}
 }
 
+#[derive(Debug, PartialEq, Eq)]
 pub struct SelectItem {
     pub expr: Expr,
     pub alias: Option<Ident>,
 }
 
+#[derive(Debug, PartialEq, Eq)]
 pub struct JoinClause {
     kind: JoinKind,
     table: TableRef,
     constraint: JoinConstraint,
 }
 
+#[derive(Debug, PartialEq, Eq)]
 pub enum JoinKind {
     Inner,
     Left,
@@ -140,12 +161,14 @@ pub enum JoinKind {
     //TODO: LeftSemi LeftAnit bhaang bhosda
 }
 
+#[derive(Debug, PartialEq, Eq)]
 pub enum JoinConstraint {
     Natural,
     On(Expr),
     Using(Vec<Ident>),
 }
 
+#[derive(Debug, PartialEq, Eq)]
 pub enum Expr {
     Literal(Literal),
     Identifier(Ident),
@@ -207,6 +230,7 @@ pub enum Expr {
     },
 }
 
+#[derive(Debug, PartialEq, Eq)]
 pub struct Call {
     name: Ident,
     args: Args,
@@ -214,16 +238,19 @@ pub struct Call {
     filter: Option<Box<Expr>>, // aggregate
 }
 
+#[derive(Debug, PartialEq, Eq)]
 pub enum Args {
     Star, // COUNT(*)
     List(Vec<Expr>),
 }
 
+#[derive(Debug, PartialEq, Eq)]
 pub enum UnaryOp {
     Neg,
     Not,
 }
 
+#[derive(Debug, PartialEq, Eq)]
 pub enum BinaryOp {
     Add,
     Sub,
@@ -242,6 +269,7 @@ pub enum BinaryOp {
     Or,
 }
 
+#[derive(Debug, PartialEq, Eq)]
 pub enum Literal {
     Number(String),
     String(String),

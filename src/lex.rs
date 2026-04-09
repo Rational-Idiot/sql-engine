@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::OnceLock;
 
 pub struct Lex {
-    input: Vec<char>,
+    pub input: Vec<char>,
     pos: usize,
 }
 
@@ -362,6 +362,7 @@ impl fmt::Display for Token {
             Token::Minus => write!(f, "-"),
             Token::Divide => write!(f, "/"),
             Token::Percent => write!(f, "%"),
+            Token::Dot => write!(f, "."),
 
             Token::And => write!(f, "AND"),
             Token::Or => write!(f, "OR"),
