@@ -33,6 +33,7 @@ pub enum Token {
     Minus,
     Divide,
     Percent,
+    Dot,
 
     And,
     Or,
@@ -76,7 +77,7 @@ pub enum Token {
     Primary,
     Key,
     Unique,
-    Defualt,
+    Default,
 
     Integer,
     Float,
@@ -162,7 +163,7 @@ fn keyword_map() -> &'static HashMap<&'static str, Token> {
         m.insert("PRIMARY", Token::Primary);
         m.insert("KEY", Token::Key);
         m.insert("UNIQUE", Token::Unique);
-        m.insert("DEFAULT", Token::Defualt);
+        m.insert("DEFAULT", Token::Default);
 
         m.insert("INT", Token::Integer);
         m.insert("INTEGER", Token::Integer);
@@ -258,6 +259,11 @@ impl Lex {
                     return Ok(Token::Equal);
                 }
 
+                '.' => {
+                    self.advance();
+                    return Ok(Token::Dot);
+                }
+
                 '<' => {
                     self.advance();
                     match self.peek() {
@@ -323,6 +329,102 @@ impl Iterator for Lex {
 
     fn next(&mut self) -> Option<Self::Item> {
         Some(self.next_token())
+    }
+}
+
+use std::fmt;
+
+impl fmt::Display for Token {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Token::Create => write!(f, "CREATE"),
+            Token::Table => write!(f, "TABLE"),
+            Token::Insert => write!(f, "INSERT"),
+            Token::Into => write!(f, "INTO"),
+            Token::Values => write!(f, "VALUES"),
+            Token::Select => write!(f, "SELECT"),
+            Token::From => write!(f, "FROM"),
+            Token::Where => write!(f, "WHERE"),
+            Token::Delete => write!(f, "DELETE"),
+            Token::Drop => write!(f, "DROP"),
+            Token::Update => write!(f, "UPDATE"),
+            Token::Set => write!(f, "SET"),
+            Token::Distinct => write!(f, "DISTINCT"),
+            Token::All => write!(f, "ALL"),
+            Token::Null => write!(f, "NULL"),
+
+            Token::LParen => write!(f, "("),
+            Token::RParen => write!(f, ")"),
+            Token::Comma => write!(f, ","),
+            Token::Semicolon => write!(f, ";"),
+            Token::Star => write!(f, "*"),
+            Token::Plus => write!(f, "+"),
+            Token::Minus => write!(f, "-"),
+            Token::Divide => write!(f, "/"),
+            Token::Percent => write!(f, "%"),
+
+            Token::And => write!(f, "AND"),
+            Token::Or => write!(f, "OR"),
+            Token::Not => write!(f, "NOT"),
+
+            Token::As => write!(f, "AS"),
+            Token::Is => write!(f, "IS"),
+            Token::Between => write!(f, "BETWEEN"),
+            Token::In => write!(f, "IN"),
+
+            Token::Like => write!(f, "LIKE"),
+            Token::Ilike => write!(f, "ILIKE"),
+            Token::Exists => write!(f, "EXISTS"),
+            Token::Cast => write!(f, "CAST"),
+            Token::Filter => write!(f, "FILTER"),
+            Token::If => write!(f, "IF"),
+
+            Token::Join => write!(f, "JOIN"),
+            Token::Inner => write!(f, "INNER"),
+            Token::Outer => write!(f, "OUTER"),
+            Token::Left => write!(f, "LEFT"),
+            Token::Right => write!(f, "RIGHT"),
+            Token::Natural => write!(f, "NATURAL"),
+            Token::Full => write!(f, "FULL"),
+            Token::Cross => write!(f, "CROSS"),
+            Token::On => write!(f, "ON"),
+            Token::Using => write!(f, "USING"),
+
+            Token::Order => write!(f, "ORDER"),
+            Token::By => write!(f, "BY"),
+            Token::Group => write!(f, "GROUP"),
+            Token::Having => write!(f, "HAVING"),
+            Token::Limit => write!(f, "LIMIT"),
+            Token::Offset => write!(f, "OFFSET"),
+            Token::Asc => write!(f, "ASC"),
+            Token::Desc => write!(f, "DESC"),
+            Token::Nulls => write!(f, "NULLS"),
+            Token::First => write!(f, "FIRST"),
+            Token::Last => write!(f, "LAST"),
+
+            Token::Primary => write!(f, "PRIMARY"),
+            Token::Key => write!(f, "KEY"),
+            Token::Unique => write!(f, "UNIQUE"),
+            Token::Default => write!(f, "DEFAULT"),
+
+            Token::Integer => write!(f, "INTEGER"),
+            Token::Float => write!(f, "FLOAT"),
+            Token::Bool => write!(f, "BOOLEAN"),
+            Token::Text => write!(f, "TEXT"),
+
+            Token::Equal => write!(f, "="),
+            Token::NotEqual => write!(f, "<>"),
+            Token::Less => write!(f, "<"),
+            Token::LessEqual => write!(f, "<="),
+            Token::Greater => write!(f, ">"),
+            Token::GreaterEqual => write!(f, ">="),
+
+            Token::Id(s) => write!(f, "{}", s),
+            Token::Number(n) => write!(f, "{}", n),
+            Token::String(s) => write!(f, "'{}'", s),
+
+            Token::EOF => write!(f, "EOF"),
+        }
     }
 }
 
