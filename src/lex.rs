@@ -25,7 +25,18 @@ pub enum Token {
     RParen,
     Comma,
     Semicolon,
+    Star,
+    Plus,
+    Minus,
+    Divide,
+    Percent,
+
     Equal,
+    NotEqual,
+    Less,
+    LessEqual,
+    Greater,
+    GreaterEqual,
 
     Id(String),
     Number(String),
@@ -67,7 +78,7 @@ impl Lex {
     pub fn next_token(&mut self) -> Result<Token, String> {
         while let Some(c) = self.peek() {
             match c {
-                ' ' | '\t' | '\n' => self.advance(),
+                ' ' | '\t' | '\n' | '\r' => self.advance(),
                 '(' => {
                     self.advance();
                     return Ok(Token::LParen);
@@ -80,21 +91,78 @@ impl Lex {
                     self.advance();
                     return Ok(Token::Comma);
                 }
+                ';' => {
+                    self.advance();
+                    return Ok(Token::Semicolon);
+                }
+
+                '*' => {
+                    self.advance();
+                    return Ok(Token::Star);
+                }
+
+                '+' => {
+                    self.advance();
+                    return Ok(Token::Plus);
+                }
+                '-' => {
+                    self.advance();
+                    return Ok(Token::Minus);
+                }
+                '/' => {
+                    self.advance();
+                    return Ok(Token::Divide);
+                }
+                '%' => {
+                    self.advance();
+                    return Ok(Token::Percent);
+                }
+
                 '=' => {
                     self.advance();
                     return Ok(Token::Equal);
                 }
+
+                '<' => {
+                    self.advance();
+                    match self.peek() {
+                        Some('>') => {
+                            self.advance();
+                            return Ok(Token::NotEqual);
+                        }
+                        Some('=') => {
+                            self.advance();
+                            return Ok(Token::LessEqual);
+                        }
+                        _ => return Ok(Token::Less),
+                    }
+                }
+
+                '>' => {
+                    self.advance();
+                    if self.peek() == Some('=') {
+                        self.advance();
+                        return Ok(Token::GreaterEqual);
+                    }
+                    return Ok(Token::Greater);
+                }
+
                 '\'' => {
                     self.advance();
                     let s = self.eat_while(|c| c != '\'');
+                    if self.peek() != Some('\'') {
+                        return Err("Unterminated string literal".into());
+                    }
                     self.advance();
                     return Ok(Token::String(s));
                 }
+
                 c if c.is_ascii_digit() => {
                     let num = self.eat_while(|c| c.is_ascii_digit());
                     return Ok(Token::Number(num));
                 }
-                c if c.is_ascii_alphabetic() => {
+
+                c if c.is_ascii_alphabetic() || c == '_' => {
                     let s = self.eat_while(|c| c.is_alphanumeric() || c == '_');
                     return Ok(Self::extract_keyword(s));
                 }
@@ -125,5 +193,67 @@ impl Lex {
 
             _ => Token::Id(s),
         }
+    }
+}
+
+impl Iterator for Lex {
+    type Item = Result<Token, String>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        Some(self.next_token())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::lex::{Lex, Token};
+
+    #[test]
+    fn tokenise_paren() {
+        let mut lexer = Lex::new();
+        lexer.input = vec!['(', ')'];
+        let mut res: Vec<Token> = Vec::new();
+
+        while let Ok(t) = lexer.next_token() {
+            if t == Token::EOF {
+                res.push(t);
+                break;
+            }
+            res.push(t);
+        }
+        assert_eq!(res, vec![Token::LParen, Token::RParen, Token::EOF])
+    }
+
+    #[test]
+    fn tokenise_create_table_query() {
+        let mut lexer = Lex::new();
+        lexer.input = "CREATE TABLE users (id, name);".chars().collect();
+        let mut res: Vec<Token> = Vec::new();
+
+        for tok in lexer {
+            if let Ok(t) = tok {
+                if t == Token::EOF {
+                    res.push(t);
+                    break;
+                }
+                res.push(t);
+            }
+        }
+
+        assert_eq!(
+            res,
+            vec![
+                Token::Create,
+                Token::Table,
+                Token::Id("users".to_string()),
+                Token::LParen,
+                Token::Id("id".to_string()),
+                Token::Comma,
+                Token::Id("name".to_string()),
+                Token::RParen,
+                Token::Semicolon,
+                Token::EOF,
+            ]
+        );
     }
 }
