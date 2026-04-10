@@ -1,9 +1,9 @@
-use std::fmt;
+use std::{cmp::min, fmt};
 
 use crate::{
     ast::{
-        DataType, Expr, Ident, InsertSource, InsertStmt, Literal, Order, SelectItem, SelectStmt,
-        SetQuantifier, SortType, Stmt, TableRef, UnaryOp,
+        BinaryOp, DataType, Expr, Ident, InsertSource, InsertStmt, Literal, Order, SelectItem,
+        SelectStmt, SetQuantifier, SortType, Stmt, TableRef, UnaryOp,
     },
     lex::Token,
 };
@@ -336,7 +336,126 @@ impl Parser {
             _ => self.parse_primary()?,
         };
 
-        todo!()
+        loop {
+            // IS [NOT] NULL
+            if self.peek() == &Token::Is {
+                if 6 < min_bp {
+                    break;
+                }
+                self.advance();
+
+                let neg = self.eat(&Token::Not);
+                self.expect(&Token::Null)?;
+                lhs = Expr::IsNull {
+                    expr: Box::new(lhs),
+                    neg,
+                };
+                continue;
+            }
+
+            // [NOT] BETWEEN l and h
+            let flag = self.peek() == &Token::Not && self.peek_ahead(1) == &Token::Between;
+            if self.peek() == &Token::Between || flag {
+                if min_bp > 6 {
+                    break;
+                }
+                let neg = self.eat(&Token::Not);
+                self.eat(&Token::Between);
+
+                let l = self.parse_expr(7)?;
+                self.expect(&Token::And)?;
+                let h = self.parse_expr(7)?;
+
+                lhs = Expr::Between {
+                    expr: Box::new(lhs),
+                    negated: neg,
+                    low: Box::new(l),
+                    high: Box::new(h),
+                };
+                continue;
+            }
+
+            // [NOT] IN (list | subquery)
+            let flag = self.peek() == &Token::Not && self.peek_ahead(1) == &Token::In;
+            if self.peek() == &Token::In || flag {
+                if min_bp > 6 {
+                    break;
+                }
+                let neg = self.eat(&Token::Not);
+                self.eat(&Token::In);
+
+                self.expect(&Token::LParen);
+                lhs = if self.peek() == &Token::Select {
+                    let q = self.parse_select()?;
+                    self.expect(&Token::RParen)?;
+                    Expr::InSubquery {
+                        expr: Box::new(lhs),
+                        query: Box::new(q),
+                        neg,
+                    }
+                } else {
+                    let list = self.comma_sep(|p| p.parse_expr(0))?;
+                    self.expect(&Token::RParen)?;
+                    Expr::InList {
+                        expr: Box::new(lhs),
+                        list,
+                        neg,
+                    }
+                };
+                continue;
+            }
+
+            // [NOT] LIKE/ILIKE
+            let flag = self.peek() == &Token::Not
+                && matches!(self.peek_ahead(1), Token::Like | Token::Ilike);
+            if matches!(self.peek(), Token::Like | Token::Ilike) || flag {
+                if min_bp > 6 {
+                    break;
+                }
+                let neg = self.eat(&Token::Not);
+                let insensitive = self.peek() == &Token::Ilike;
+                self.advance(); // LIKE or ILIKE
+                let pattern = self.parse_expr(7)?;
+                lhs = Expr::Like {
+                    expr: Box::new(lhs),
+                    pattern: Box::new(pattern),
+                    neg,
+                    insensitive: insensitive,
+                };
+                continue;
+            }
+
+            let (op, l_bp, r_bp) = match self.peek() {
+                Token::Or => (BinaryOp::Or, 1u8, 2u8),
+                Token::And => (BinaryOp::And, 3, 4),
+                Token::Equal => (BinaryOp::Eq, 6, 7),
+                Token::NotEqual => (BinaryOp::Ne, 6, 7),
+                Token::Less => (BinaryOp::Lt, 6, 7),
+                Token::LessEqual => (BinaryOp::Le, 6, 7),
+                Token::Greater => (BinaryOp::Gt, 6, 7),
+                Token::GreaterEqual => (BinaryOp::Ge, 6, 7),
+                Token::Plus => (BinaryOp::Add, 9, 10),
+                Token::Minus => (BinaryOp::Sub, 9, 10),
+                Token::Star => (BinaryOp::Mul, 11, 12),
+                Token::Divide => (BinaryOp::Div, 11, 12),
+                Token::Percent => (BinaryOp::Percent, 11, 12),
+                _ => break,
+            };
+
+            if l_bp < min_bp {
+                break;
+            }
+            self.advance(); //Consume Operator
+            let rhs = self.parse_expr(r_bp)?;
+
+            lhs = Expr::BinaryOp {
+                left: Box::new(lhs),
+                op,
+                right: Box::new(rhs),
+            };
+        }
+
+        Ok(lhs)
     }
 
     fn parse_primary(&mut self) -> Result<Expr> {

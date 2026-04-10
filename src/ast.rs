@@ -214,7 +214,7 @@ pub enum Expr {
         expr: Box<Expr>,
         pattern: Box<Expr>,
         neg: bool,
-        case_insensitive: bool, // LIKE vs ILIKE
+        insensitive: bool, // LIKE vs ILIKE
     },
 
     SubQuery(Box<SelectStmt>),
