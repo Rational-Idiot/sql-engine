@@ -2,8 +2,9 @@ use std::fmt;
 
 use crate::{
     ast::{
-        Assignment, BinaryOp, DataType, Expr, Ident, InsertSource, InsertStmt, Literal, Order,
-        SelectItem, SelectStmt, SetQuantifier, SortType, Stmt, TableRef, UnaryOp, UpdateStmt,
+        Assignment, BinaryOp, DataType, DeleteStmt, Expr, Ident, InsertSource, InsertStmt, Literal,
+        Order, SelectItem, SelectStmt, SetQuantifier, SortType, Stmt, TableRef, UnaryOp,
+        UpdateStmt,
     },
     lex::Token,
 };
@@ -311,6 +312,24 @@ impl Parser {
         Ok(UpdateStmt {
             table,
             assign,
+            where_clause,
+        })
+    }
+
+    fn parse_delete(&mut self) -> Result<DeleteStmt> {
+        self.expect(&Token::Delete)?;
+        self.expect(&Token::From)?;
+
+        let table = self.parse_table()?;
+
+        let where_clause = if self.eat(&Token::Where) {
+            Some(self.parse_expr(0)?)
+        } else {
+            None
+        };
+
+        Ok(DeleteStmt {
+            table,
             where_clause,
         })
     }

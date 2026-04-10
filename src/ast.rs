@@ -51,8 +51,8 @@ pub struct Assignment {
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct DeleteStmt {
-    table: TableRef,
-    where_clause: Option<Expr>,
+    pub table: TableRef,
+    pub where_clause: Option<Expr>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
