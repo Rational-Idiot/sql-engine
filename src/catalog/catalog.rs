@@ -2,7 +2,7 @@
 use core::fmt;
 use std::collections::HashMap;
 
-use crate::ast::{ColumnConstraint, CreateTableStmt, DataType};
+use crate::sql::ast::{ColumnConstraint, CreateTableStmt, DataType, DropStmt};
 
 #[derive(Debug, PartialEq)]
 pub enum CatalogError {
@@ -10,15 +10,19 @@ pub enum CatalogError {
     TableAlreadyExiste(String),
     NoColumns(String),
     DuplicateColumn(String, String),
+    InvalidDropTarget(String),
 }
 
 impl fmt::Display for CatalogError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::TableNotFound(t) => write!(f, "Table '{t}' does not exists"),
-            Self::TableAlreadyExiste(t) => write!(f, "Table '{t}' already not exists"),
+            Self::TableAlreadyExiste(t) => write!(f, "Table '{t}' already exists"),
             Self::NoColumns(t) => write!(f, "Table '{t}' has no columns"),
             Self::DuplicateColumn(t, c) => write!(f, "Table '{t}' already has column '{c}'"),
+            Self::InvalidDropTarget(t) => {
+                write!(f, "invalid DROP target: expected table, got '{t}'")
+            }
         }
     }
 }
@@ -44,7 +48,7 @@ pub struct Column {
 pub struct Table {
     pub name: String,
     pub name_lower: String,
-    cols: Vec<Column>,
+    pub cols: Vec<Column>,
 }
 
 impl Table {
@@ -140,5 +144,20 @@ impl Catalog {
             },
         );
         Ok(())
+    }
+
+    pub fn drop_table(&mut self, stmt: DropStmt) -> Result<()> {
+        match stmt {
+            DropStmt::Table { name, if_exists } => {
+                let name_lower = name.0.to_ascii_lowercase();
+                if self.tables.remove(&name_lower).is_none() && !if_exists {
+                    return Err(CatalogError::TableNotFound(name_lower));
+                }
+                Ok(())
+            }
+
+            #[allow(unreachable_patterns)]
+            got => return Err(CatalogError::InvalidDropTarget(format!("{}", got))),
+        }
     }
 }

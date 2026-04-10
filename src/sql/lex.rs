@@ -437,7 +437,7 @@ impl fmt::Display for Token {
 
 #[cfg(test)]
 mod tests {
-    use crate::lex::{Lex, Token};
+    use crate::sql::lex::{Lex, Token};
 
     #[test]
     fn tokenise_paren() {

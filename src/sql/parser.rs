@@ -1,6 +1,6 @@
 use std::fmt;
 
-use crate::{ast::*, lex::Token};
+use crate::sql::{ast::*, lex::Token};
 
 pub struct Parser {
     tokens: Vec<Token>,
@@ -880,7 +880,7 @@ fn token_desc(t: &Token) -> &'static str {
 // Thank you ChatGPT for the Test Suite :yum
 #[cfg(test)]
 mod tests {
-    use crate::{
+    use crate::sql::{
         ast::*,
         lex::{Lex, Token},
         parser::Parser,

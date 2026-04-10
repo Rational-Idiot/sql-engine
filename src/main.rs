@@ -1,4 +1,4 @@
-use db::{
+use db::sql::{
     lex::{Lex, Token},
     parser::Parser,
 };
@@ -27,4 +27,3 @@ fn main() {
         }
     }
 }
-

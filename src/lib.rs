@@ -1,4 +1,4 @@
-pub mod ast;
+// lib.rs
+
 pub mod catalog;
-pub mod lex;
-pub mod parser;
+pub mod sql;
