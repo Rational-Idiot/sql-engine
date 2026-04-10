@@ -371,6 +371,8 @@ impl fmt::Display for Token {
             Token::And => write!(f, "AND"),
             Token::Or => write!(f, "OR"),
             Token::Not => write!(f, "NOT"),
+            Token::True => write!(f, "TRUE"),
+            Token::False => write!(f, "FALSE"),
 
             Token::As => write!(f, "AS"),
             Token::Is => write!(f, "IS"),

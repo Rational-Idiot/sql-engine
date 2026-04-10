@@ -1,4 +1,4 @@
-use std::{cmp::min, fmt};
+use std::fmt;
 
 use crate::{
     ast::{
@@ -384,7 +384,7 @@ impl Parser {
                 let neg = self.eat(&Token::Not);
                 self.eat(&Token::In);
 
-                self.expect(&Token::LParen);
+                self.expect(&Token::LParen)?;
                 lhs = if self.peek() == &Token::Select {
                     let q = self.parse_select()?;
                     self.expect(&Token::RParen)?;
@@ -471,9 +471,9 @@ impl Parser {
 
             // CAST(expr AS type)
             Token::Cast => {
-                self.expect(&Token::LParen);
+                self.expect(&Token::LParen)?;
                 let e = self.parse_expr(0)?;
-                self.expect(&Token::As);
+                self.expect(&Token::As)?;
                 let data_type = self.parse_data_type()?;
                 self.expect(&Token::RParen)?;
                 Ok(Expr::Cast {
@@ -502,7 +502,7 @@ impl Parser {
                         return Ok(Expr::QualifiedGlob(Ident(id)));
                     }
                     let col = self.expect_ident()?;
-                    return Ok(Expr::Identifier(Ident(format!("{name}.{}", col.0))));
+                    return Ok(Expr::Identifier(Ident(format!("{id}.{}", col.0))));
                 }
 
                 Ok(Expr::Identifier(Ident(id)))
@@ -567,10 +567,14 @@ fn token_desc(t: &Token) -> &'static str {
     }
 }
 
+// Thank you ChatGPT for the Test Suite :yum
 #[cfg(test)]
 mod tests {
     use crate::{
-        ast::{Expr, Ident, InsertSource, SelectItem, SelectStmt, SetQuantifier, Stmt, TableRef},
+        ast::{
+            BinaryOp, Expr, Ident, InsertSource, SelectItem, SelectStmt, SetQuantifier, Stmt,
+            TableRef,
+        },
         lex::{Lex, Token},
         parser::Parser,
     };
@@ -612,7 +616,7 @@ mod tests {
     }
 
     #[test]
-    fn test_insert_values() {
+    fn parse_insert_values() {
         let mut lexer = Lex::new();
         lexer.input = "INSERT INTO users (id, name) VALUES (1, 'Alice')"
             .chars()
@@ -644,6 +648,156 @@ mod tests {
                 }
             }
             _ => panic!("Expected INSERT statement"),
+        }
+    }
+
+    #[test]
+    fn parse_expr_complex() {
+        let mut lexer = Lex::new();
+        lexer.input = "NOT a BETWEEN 1 + 2 AND b * 3 OR c IS NOT NULL AND d NOT LIKE 'x%'"
+            .chars()
+            .collect();
+
+        let tokens: Vec<Token> = lexer
+            .map(|t| t.unwrap())
+            .take_while(|t| *t != Token::EOF)
+            .chain(std::iter::once(Token::EOF))
+            .collect();
+
+        let mut parser = Parser::new(tokens);
+
+        let expr = parser.parse_expr(0).unwrap();
+
+        match expr {
+            Expr::BinaryOp {
+                op: BinaryOp::Or, ..
+            } => {}
+            _ => panic!("Top-level operator should be OR"),
+        }
+    }
+
+    #[test]
+    fn test_insert_values_with_expressions() {
+        let mut lexer = Lex::new();
+        lexer.input = "INSERT INTO users (id, score, flag) \
+                   VALUES (1 + 2 * 3, (4 + 5) * 6, NOT 0)"
+            .chars()
+            .collect();
+
+        let tokens: Vec<Token> = lexer
+            .map(|t| t.unwrap())
+            .take_while(|t| *t != Token::EOF)
+            .chain(std::iter::once(Token::EOF))
+            .collect();
+
+        let mut parser = Parser::new(tokens);
+        let stmt = parser.parse().unwrap();
+
+        match stmt {
+            Stmt::Insert(insert) => {
+                assert_eq!(insert.columns.len(), 3);
+
+                match insert.source {
+                    InsertSource::Values(rows) => {
+                        assert_eq!(rows.len(), 1);
+                        let row = &rows[0];
+
+                        assert!(matches!(row[0], Expr::BinaryOp { .. }));
+                        assert!(matches!(row[1], Expr::BinaryOp { .. }));
+                        assert!(matches!(row[2], Expr::UnaryOp { .. }));
+                    }
+                    _ => panic!("Expected VALUES"),
+                }
+            }
+            _ => panic!("Expected INSERT"),
+        }
+    }
+
+    #[test]
+    fn test_insert_select_with_expressions() {
+        let mut lexer = Lex::new();
+        lexer.input = "INSERT INTO users \
+                   SELECT id, score * 2 + 5, NOT active \
+                   FROM accounts \
+                   WHERE score > 10 AND NOT deleted"
+            .chars()
+            .collect();
+
+        let tokens: Vec<Token> = lexer
+            .map(|t| t.unwrap())
+            .take_while(|t| *t != Token::EOF)
+            .chain(std::iter::once(Token::EOF))
+            .collect();
+
+        let mut parser = Parser::new(tokens);
+        let stmt = parser.parse().unwrap();
+
+        match stmt {
+            Stmt::Insert(insert) => match insert.source {
+                InsertSource::Select(select) => {
+                    assert_eq!(select.col.len(), 3);
+
+                    assert!(matches!(select.col[1].expr, Expr::BinaryOp { .. }));
+                    assert!(matches!(select.col[2].expr, Expr::UnaryOp { .. }));
+
+                    assert!(select.where_clause.is_some());
+
+                    match select.where_clause.unwrap() {
+                        Expr::BinaryOp {
+                            op: BinaryOp::And, ..
+                        } => {}
+                        _ => panic!("Expected AND in WHERE"),
+                    }
+                }
+                _ => panic!("Expected SELECT source"),
+            },
+            _ => panic!("Expected INSERT"),
+        }
+    }
+
+    #[test]
+    fn test_select_complex_expressions() {
+        let mut lexer = Lex::new();
+        lexer.input = "SELECT a + b * c AS result, \
+                          NOT (x > 10 OR y < 5) AS flag \
+                   FROM table1 \
+                   WHERE (a BETWEEN 1 AND 10 OR b IN (1, 2, 3)) \
+                   AND c IS NOT NULL \
+                   ORDER BY result DESC \
+                   LIMIT 10 OFFSET 5"
+            .chars()
+            .collect();
+
+        let tokens: Vec<Token> = lexer
+            .map(|t| t.unwrap())
+            .take_while(|t| *t != Token::EOF)
+            .chain(std::iter::once(Token::EOF))
+            .collect();
+
+        let mut parser = Parser::new(tokens);
+        let stmt = parser.parse().unwrap();
+
+        match stmt {
+            Stmt::Select(select) => {
+                assert_eq!(select.col.len(), 2);
+                assert!(matches!(select.col[0].expr, Expr::BinaryOp { .. }));
+                assert!(matches!(select.col[1].expr, Expr::UnaryOp { .. }));
+
+                let where_expr = select.where_clause.expect("Expected WHERE");
+
+                match where_expr {
+                    Expr::BinaryOp {
+                        op: BinaryOp::And, ..
+                    } => {}
+                    _ => panic!("Expected top-level AND"),
+                }
+
+                assert_eq!(select.order_by.len(), 1);
+
+                assert_eq!(select.limit, Some(10));
+                assert_eq!(select.offset, Some(5));
+            }
+            _ => panic!("Expected SELECT"),
         }
     }
 }
