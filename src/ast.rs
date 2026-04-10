@@ -78,7 +78,7 @@ pub struct ColumnDef {
     pub constraints: Vec<ColumnConstraint>,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum DataType {
     Integer,
     Float,

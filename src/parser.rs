@@ -215,7 +215,7 @@ impl Parser {
     fn parse_table(&mut self) -> Result<TableRef> {
         if self.eat(&Token::LParen) {
             let query = self.parse_select()?;
-            self.expect(&Token::RParen);
+            self.expect(&Token::RParen)?;
             self.eat(&Token::As);
             let alias = self.expect_ident()?;
             return Ok(TableRef::Subquery {
@@ -912,6 +912,7 @@ mod tests {
                     name: Ident("gay".to_string()),
                     alias: None,
                 }),
+                joins: vec![],
                 where_clause: None,
                 group_by: vec![],
                 having: None,
