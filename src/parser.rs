@@ -142,6 +142,12 @@ impl Parser {
             None
         };
 
+        let joins = if from.is_some() {
+            self.parse_joins()?
+        } else {
+            vec![]
+        };
+
         let where_clause = if self.eat(&Token::Where) {
             Some(self.parse_expr(0)?)
         } else {
@@ -184,6 +190,7 @@ impl Parser {
             col,
             quantifier,
             from,
+            joins,
             where_clause,
             group_by,
             having,
@@ -206,9 +213,120 @@ impl Parser {
     }
 
     fn parse_table(&mut self) -> Result<TableRef> {
+        if self.eat(&Token::LParen) {
+            let query = self.parse_select()?;
+            self.expect(&Token::RParen);
+            self.eat(&Token::As);
+            let alias = self.expect_ident()?;
+            return Ok(TableRef::Subquery {
+                query: Box::new(query),
+                alias,
+            });
+        }
+
         let name = self.expect_ident()?;
         let alias = self.parse_alias()?;
         Ok(TableRef::Named { name, alias })
+    }
+
+    fn parse_joins(&mut self) -> Result<Vec<JoinClause>> {
+        let mut joins = vec![];
+
+        loop {
+            let kind = match self.peek() {
+                Token::Join => {
+                    self.advance();
+                    JoinKind::Inner
+                }
+
+                Token::Inner => {
+                    self.advance();
+                    self.expect(&Token::Join)?;
+                    JoinKind::Inner
+                }
+
+                Token::Left => {
+                    self.advance();
+                    self.eat(&Token::Outer);
+                    self.expect(&Token::Join)?;
+                    JoinKind::Left
+                }
+
+                Token::Right => {
+                    self.advance();
+                    self.eat(&Token::Outer);
+                    self.expect(&Token::Join)?;
+                    JoinKind::Right
+                }
+
+                Token::Full => {
+                    self.advance();
+                    self.eat(&Token::Outer);
+                    self.expect(&Token::Join)?;
+                    JoinKind::Outer
+                }
+
+                Token::Cross => {
+                    self.advance();
+                    self.expect(&Token::Join)?;
+                    let table = self.parse_table()?;
+
+                    joins.push(JoinClause {
+                        kind: JoinKind::Cross,
+                        table,
+                        constraint: JoinConstraint::Natural,
+                    });
+
+                    continue;
+                }
+
+                Token::Natural => {
+                    self.advance();
+                    self.expect(&Token::Join)?;
+                    let table = self.parse_table()?;
+
+                    joins.push(JoinClause {
+                        kind: JoinKind::Inner,
+                        table,
+                        constraint: JoinConstraint::Natural,
+                    });
+
+                    continue;
+                }
+
+                _ => break,
+            };
+
+            let table = self.parse_table()?;
+            let constraint = match self.peek() {
+                Token::On => {
+                    self.advance();
+                    JoinConstraint::On(self.parse_expr(0)?)
+                }
+
+                Token::Using => {
+                    self.advance();
+                    self.expect(&Token::LParen)?;
+                    let cols = self.comma_sep(|p| p.expect_ident())?;
+                    self.expect(&Token::RParen)?;
+                    JoinConstraint::Using(cols)
+                }
+
+                got => {
+                    return Err(ParseError::UnexpectedToken {
+                        got: got.clone(),
+                        expected: "ON | USING",
+                    });
+                }
+            };
+
+            joins.push(JoinClause {
+                kind,
+                table,
+                constraint,
+            });
+        }
+        Ok(joins)
     }
 
     fn parse_sel_list(&mut self) -> Result<Vec<SelectItem>> {

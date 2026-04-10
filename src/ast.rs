@@ -1,5 +1,7 @@
 #![allow(dead_code)]
 
+//Structure is insipred by stoolap - https://github.com/stoolap/stoolap/blob/main/src/parser/ast.rs
+
 use core::fmt;
 #[derive(Debug, PartialEq, Eq)]
 pub enum Stmt {
@@ -16,7 +18,7 @@ pub struct SelectStmt {
     pub col: Vec<SelectItem>,
     pub quantifier: SetQuantifier,
     pub from: Option<TableRef>,
-    // joins: Vec<JoinClause>,
+    pub joins: Vec<JoinClause>,
     pub where_clause: Option<Expr>,
     pub group_by: Vec<Expr>,
     pub having: Option<Expr>,
@@ -148,9 +150,9 @@ pub struct SelectItem {
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct JoinClause {
-    kind: JoinKind,
-    table: TableRef,
-    constraint: JoinConstraint,
+    pub kind: JoinKind,
+    pub table: TableRef,
+    pub constraint: JoinConstraint,
 }
 
 #[derive(Debug, PartialEq, Eq)]
