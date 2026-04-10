@@ -39,3 +39,19 @@ pub struct Scope<'parent, 'catalog> {
     entries: Vec<Entry<'catalog>>,
     parent: Option<&'parent Scope<'parent, 'catalog>>,
 }
+
+impl<'parent, 'catalog> Scope<'parent, 'catalog> {
+    pub fn new() -> Self {
+        Scope {
+            entries: Vec::new(),
+            parent: None,
+        }
+    }
+
+    pub fn with_parent(parent: &'parent Scope<'parent, 'catalog>) -> Self {
+        Scope {
+            entries: Vec::new(),
+            parent: Some(parent),
+        }
+    }
+}
