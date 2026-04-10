@@ -1086,4 +1086,139 @@ mod tests {
             _ => panic!("Expected DELETE"),
         }
     }
+
+    #[test]
+    fn test_drop_table_basic() {
+        let mut lexer = Lex::new();
+        lexer.input = "DROP TABLE users".chars().collect();
+
+        let tokens: Vec<Token> = lexer
+            .map(|t| t.unwrap())
+            .take_while(|t| *t != Token::EOF)
+            .chain(std::iter::once(Token::EOF))
+            .collect();
+
+        let mut parser = Parser::new(tokens);
+        let stmt = parser.parse().unwrap();
+
+        assert_eq!(
+            stmt,
+            Stmt::Drop(DropStmt::Table {
+                name: Ident("users".into()),
+                if_exists: false,
+            })
+        );
+    }
+
+    #[test]
+    fn test_drop_table_if_exists() {
+        let mut lexer = Lex::new();
+        lexer.input = "DROP TABLE IF EXISTS users;".chars().collect();
+
+        let tokens: Vec<Token> = lexer
+            .map(|t| t.unwrap())
+            .take_while(|t| *t != Token::EOF)
+            .chain(std::iter::once(Token::EOF))
+            .collect();
+
+        let mut parser = Parser::new(tokens);
+        let stmt = parser.parse().unwrap();
+
+        assert_eq!(
+            stmt,
+            Stmt::Drop(DropStmt::Table {
+                name: Ident("users".into()),
+                if_exists: true,
+            })
+        );
+    }
+
+    #[test]
+    fn test_update_complex() {
+        let mut lexer = Lex::new();
+        lexer.input = "UPDATE users u \
+                   SET score = score * 2 + 5, \
+                       active = NOT (age > 18 AND banned = 0), \
+                       name = name \
+                   WHERE (score BETWEEN 10 AND 20 OR id IN (1, 2, 3)) \
+                   AND NOT deleted \
+                   OR name LIKE 'A%'"
+            .chars()
+            .collect();
+
+        let tokens: Vec<Token> = lexer
+            .map(|t| t.unwrap())
+            .take_while(|t| *t != Token::EOF)
+            .chain(std::iter::once(Token::EOF))
+            .collect();
+
+        let mut parser = Parser::new(tokens);
+        let stmt = parser.parse().unwrap();
+
+        match stmt {
+            Stmt::Update(update) => {
+                // ── Table + alias
+                assert_eq!(
+                    update.table,
+                    TableRef::Named {
+                        name: Ident("users".into()),
+                        alias: Some(Ident("u".into()))
+                    }
+                );
+
+                // ── Assignments
+                assert_eq!(update.assign.len(), 3);
+
+                // score = score * 2 + 5
+                match &update.assign[0].value {
+                    Expr::BinaryOp {
+                        op: BinaryOp::Add, ..
+                    } => {}
+                    _ => panic!("Expected arithmetic expression for score"),
+                }
+
+                // active = NOT (...)
+                match &update.assign[1].value {
+                    Expr::UnaryOp {
+                        op: UnaryOp::Not, ..
+                    } => {}
+                    _ => panic!("Expected NOT expression for active"),
+                }
+
+                // name = name (identifier)
+                match &update.assign[2].value {
+                    Expr::Identifier(_) => {}
+                    _ => panic!("Expected identifier for name"),
+                }
+
+                // ── WHERE clause
+                let where_expr = update.where_clause.expect("Expected WHERE");
+
+                // Top-level should be OR
+                match where_expr {
+                    Expr::BinaryOp {
+                        op: BinaryOp::Or,
+                        left,
+                        right,
+                    } => {
+                        // Left side should be AND
+                        match *left {
+                            Expr::BinaryOp {
+                                op: BinaryOp::And, ..
+                            } => {}
+                            _ => panic!("Expected AND on left side"),
+                        }
+
+                        // Right side should be LIKE
+                        match *right {
+                            Expr::Like { neg: false, .. } => {}
+                            _ => panic!("Expected LIKE on right side"),
+                        }
+                    }
+                    _ => panic!("Expected OR at top level"),
+                }
+            }
+            _ => panic!("Expected UPDATE statement"),
+        }
+    }
 }
