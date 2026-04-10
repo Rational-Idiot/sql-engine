@@ -3,8 +3,8 @@ use std::fmt;
 use crate::{
     ast::{
         Assignment, BinaryOp, ColumnConstraint, ColumnDef, CreateStmt, CreateTableStmt, DataType,
-        DeleteStmt, Expr, Ident, InsertSource, InsertStmt, Literal, Order, SelectItem, SelectStmt,
-        SetQuantifier, SortType, Stmt, TableRef, UnaryOp, UpdateStmt,
+        DeleteStmt, DropStmt, Expr, Ident, InsertSource, InsertStmt, Literal, Order, SelectItem,
+        SelectStmt, SetQuantifier, SortType, Stmt, TableRef, UnaryOp, UpdateStmt,
     },
     lex::Token,
 };
@@ -123,6 +123,7 @@ impl Parser {
             Token::Update => Ok(Stmt::Update(self.parse_update()?)),
             Token::Delete => Ok(Stmt::Delete(self.parse_delete()?)),
             Token::Create => Ok(Stmt::Create(self.parse_create()?)),
+            Token::Drop => Ok(Stmt::Drop(self.parse_drop()?)),
 
             got => Err(ParseError::UnexpectedToken {
                 got: got.clone(),
@@ -353,8 +354,8 @@ impl Parser {
         self.expect(&Token::Table)?;
 
         let flag = if self.eat(&Token::If) {
-            self.expect(&Token::Not);
-            self.expect(&Token::Exists);
+            self.expect(&Token::Not)?;
+            self.expect(&Token::Exists)?;
             true
         } else {
             false
@@ -409,6 +410,30 @@ impl Parser {
             data_type,
             constraints,
         })
+    }
+
+    fn parse_drop(&mut self) -> Result<DropStmt> {
+        self.expect(&Token::Drop)?;
+        match self.advance() {
+            Token::Table => {
+                let f = if self.eat(&Token::If) {
+                    self.expect(&Token::Exists)?;
+                    true
+                } else {
+                    false
+                };
+
+                Ok(DropStmt::Table {
+                    name: self.expect_ident()?,
+                    if_exists: f,
+                })
+            }
+
+            got => Err(ParseError::UnexpectedToken {
+                got,
+                expected: "TABLE",
+            }),
+        }
     }
 
     // A pratt parser inspired by core dumped https://www.youtube.com/watch?v=0c8b7YfsBKs&t=658s
@@ -695,10 +720,7 @@ fn token_desc(t: &Token) -> &'static str {
 #[cfg(test)]
 mod tests {
     use crate::{
-        ast::{
-            BinaryOp, Expr, Ident, InsertSource, SelectItem, SelectStmt, SetQuantifier, Stmt,
-            TableRef,
-        },
+        ast::*,
         lex::{Lex, Token},
         parser::Parser,
     };
@@ -922,6 +944,146 @@ mod tests {
                 assert_eq!(select.offset, Some(5));
             }
             _ => panic!("Expected SELECT"),
+        }
+    }
+
+    #[test]
+    fn test_create_table_full() {
+        let mut lexer = Lex::new();
+        lexer.input = "CREATE TABLE users (
+                        id INTEGER PRIMARY KEY,
+                        age INTEGER NOT NULL,
+                        active BOOLEAN DEFAULT 1
+                   )"
+        .chars()
+        .collect();
+
+        let tokens: Vec<Token> = lexer
+            .map(|t| t.unwrap())
+            .take_while(|t| *t != Token::EOF)
+            .chain(std::iter::once(Token::EOF))
+            .collect();
+
+        let mut parser = Parser::new(tokens);
+        let stmt = parser.parse().unwrap();
+
+        assert_eq!(
+            stmt,
+            Stmt::Create(CreateStmt::Table(CreateTableStmt {
+                name: Ident("users".into()),
+                flag: false,
+                columns: vec![
+                    ColumnDef {
+                        name: Ident("id".into()),
+                        data_type: DataType::Integer,
+                        constraints: vec![ColumnConstraint::PrimaryKey],
+                    },
+                    ColumnDef {
+                        name: Ident("age".into()),
+                        data_type: DataType::Integer,
+                        constraints: vec![ColumnConstraint::NotNull],
+                    },
+                    ColumnDef {
+                        name: Ident("active".into()),
+                        data_type: DataType::Bool,
+                        constraints: vec![ColumnConstraint::Default(Expr::Literal(
+                            Literal::Number("1".into())
+                        ))],
+                    },
+                ],
+            }))
+        );
+    }
+
+    #[test]
+    fn test_create_table_if_not_exists() {
+        let mut lexer = Lex::new();
+        lexer.input = "CREATE TABLE IF NOT EXISTS accounts (id INTEGER)"
+            .chars()
+            .collect();
+
+        let tokens: Vec<Token> = lexer
+            .map(|t| t.unwrap())
+            .take_while(|t| *t != Token::EOF)
+            .chain(std::iter::once(Token::EOF))
+            .collect();
+
+        let mut parser = Parser::new(tokens);
+        let stmt = parser.parse().unwrap();
+
+        assert_eq!(
+            stmt,
+            Stmt::Create(CreateStmt::Table(CreateTableStmt {
+                name: Ident("accounts".into()),
+                flag: true,
+                columns: vec![ColumnDef {
+                    name: Ident("id".into()),
+                    data_type: DataType::Integer,
+                    constraints: vec![],
+                }],
+            }))
+        );
+    }
+
+    #[test]
+    fn test_delete_complex_where() {
+        let mut lexer = Lex::new();
+        lexer.input = "DELETE FROM users \
+                   WHERE (age > 18 AND active = 1) \
+                   OR name LIKE 'A%'"
+            .chars()
+            .collect();
+
+        let tokens: Vec<Token> = lexer
+            .map(|t| t.unwrap())
+            .take_while(|t| *t != Token::EOF)
+            .chain(std::iter::once(Token::EOF))
+            .collect();
+
+        let mut parser = Parser::new(tokens);
+        let stmt = parser.parse().unwrap();
+
+        match stmt {
+            Stmt::Delete(DeleteStmt {
+                table,
+                where_clause,
+            }) => {
+                assert_eq!(
+                    table,
+                    TableRef::Named {
+                        name: Ident("users".into()),
+                        alias: None
+                    }
+                );
+
+                let expr = where_clause.expect("Expected WHERE");
+
+                match expr {
+                    Expr::BinaryOp {
+                        op: BinaryOp::Or,
+                        left,
+                        right,
+                    } => {
+                        match *left {
+                            Expr::BinaryOp {
+                                op: BinaryOp::And, ..
+                            } => {}
+                            _ => panic!("Expected AND on left side"),
+                        }
+
+                        match *right {
+                            Expr::Like {
+                                neg: false,
+                                insensitive: false,
+                                ..
+                            } => {}
+                            _ => panic!("Expected LIKE on right side"),
+                        }
+                    }
+                    _ => panic!("Expected OR at top level"),
+                }
+            }
+            _ => panic!("Expected DELETE"),
         }
     }
 }
