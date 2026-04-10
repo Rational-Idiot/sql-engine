@@ -350,12 +350,49 @@ impl Parser {
             // SO that COUNT(*) works
             Token::Star => Ok(Expr::Glob),
 
+            // CAST(expr AS type)
             Token::Cast => {
                 self.expect(&Token::LParen);
                 let e = self.parse_expr(0)?;
                 self.expect(&Token::As);
                 let data_type = self.parse_data_type()?;
+                self.expect(&Token::RParen)?;
+                Ok(Expr::Cast {
+                    expr: Box::new(e),
+                    data_type,
+                })
             }
+
+            // Scalar subquery or (expr)
+            Token::LParen => {
+                if self.peek() == &Token::Select {
+                    let q = self.parse_select()?;
+                    self.expect(&Token::RParen)?;
+                    Ok(Expr::SubQuery(Box::new(q)))
+                } else {
+                    let e = self.parse_expr(0)?;
+                    self.expect(&Token::RParen)?;
+                    Ok(e)
+                }
+            }
+
+            Token::Id(id) => {
+                // table.col or table.*
+                if self.eat(&Token::Dot) {
+                    if self.eat(&Token::Star) {
+                        return Ok(Expr::QualifiedGlob(Ident(id)));
+                    }
+                    let col = self.expect_ident()?;
+                    return Ok(Expr::Identifier(Ident(format!("{name}.{}", col.0))));
+                }
+
+                Ok(Expr::Identifier(Ident(id)))
+            }
+
+            got => Err(ParseError::UnexpectedToken {
+                got,
+                expected: "Expression",
+            }),
         }
     }
 

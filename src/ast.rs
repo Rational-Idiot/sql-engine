@@ -223,7 +223,7 @@ pub enum Expr {
         neg: bool,
     },
 
-    Function(Call),
+    // Function(Call),
     Cast {
         expr: Box<Expr>,
         data_type: DataType,
