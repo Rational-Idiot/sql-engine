@@ -85,10 +85,26 @@ impl Catalog {
     pub fn create_table(&mut self, stmt: CreateTableStmt) -> Result<()> {
         let name_lower = stmt.name.0.to_lowercase();
 
+        if self.tables.contains_key(&name_lower) {
+            return if stmt.flag {
+                Ok(())
+            } else {
+                Err(CatalogError::TableAlreadyExiste(name_lower))
+            };
+        }
+
+        if stmt.columns.is_empty() {
+            return Err(CatalogError::NoColumns(name_lower));
+        }
+
         let mut cols = Vec::with_capacity(stmt.columns.len());
 
         for (id, def) in stmt.columns.iter().enumerate() {
             let col_lower = def.name.0.to_lowercase();
+            if cols.iter().any(|c: &Column| c.name_lower == col_lower) {
+                return Err(CatalogError::DuplicateColumn(name_lower, col_lower));
+            }
+
             let primary_key = def
                 .constraints
                 .iter()
