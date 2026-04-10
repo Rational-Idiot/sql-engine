@@ -38,6 +38,8 @@ pub enum Token {
     And,
     Or,
     Not,
+    True,
+    False,
 
     As,
     Is,
@@ -105,7 +107,7 @@ fn keyword_map() -> &'static HashMap<&'static str, Token> {
         let mut m = HashMap::new();
         m.insert("SELECT", Token::Select);
         m.insert("TABLE", Token::Table);
-        m.insert("INSERT", Token::Table);
+        m.insert("INSERT", Token::Insert);
         m.insert("INTO", Token::Into);
         m.insert("FROM", Token::From);
         m.insert("WHERE", Token::Where);
@@ -125,6 +127,8 @@ fn keyword_map() -> &'static HashMap<&'static str, Token> {
         m.insert("AND", Token::And);
         m.insert("OR", Token::Or);
         m.insert("NOT", Token::Not);
+        m.insert("TRUE", Token::True);
+        m.insert("FALSE", Token::False);
 
         m.insert("AS", Token::As);
         m.insert("IS", Token::Is);

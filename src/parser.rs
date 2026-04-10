@@ -1,7 +1,10 @@
 use std::fmt;
 
 use crate::{
-    ast::{Expr, Ident, Order, SelectItem, SelectStmt, SetQuantifier, SortType, Stmt, TableRef},
+    ast::{
+        DataType, Expr, Ident, InsertSource, InsertStmt, Literal, Order, SelectItem, SelectStmt,
+        SetQuantifier, SortType, Stmt, TableRef, UnaryOp,
+    },
     lex::Token,
 };
 
@@ -115,6 +118,7 @@ impl Parser {
     fn parse_stmt(&mut self) -> Result<Stmt> {
         match self.peek() {
             Token::Select => Ok(Stmt::Select(self.parse_select()?)),
+            Token::Insert => Ok(Stmt::Insert(self.parse_insert()?)),
 
             got => Err(ParseError::UnexpectedToken {
                 got: got.clone(),
@@ -237,8 +241,136 @@ impl Parser {
         Ok(None)
     }
 
+    fn parse_insert(&mut self) -> Result<InsertStmt> {
+        self.expect(&Token::Insert)?;
+        self.expect(&Token::Into)?;
+        let table = self.expect_ident()?;
+
+        let columns = if self.eat(&Token::LParen) {
+            let cols = self.comma_sep(|p| p.expect_ident())?;
+            self.expect(&Token::RParen)?;
+            cols
+        } else {
+            vec![]
+        };
+
+        let source = match self.peek() {
+            Token::Values => {
+                self.eat(&Token::Values);
+                let rows = self.comma_sep(|p| {
+                    p.expect(&Token::LParen)?;
+
+                    let row = p.comma_sep(|p2| p2.parse_expr(0))?;
+
+                    p.expect(&Token::RParen)?;
+                    Ok(row)
+                })?;
+                InsertSource::Values(rows)
+            }
+
+            Token::Select => {
+                let select = self.parse_select()?;
+                InsertSource::Select(Box::new(select))
+            }
+
+            t => {
+                return Err(ParseError::UnexpectedToken {
+                    got: t.clone(),
+                    expected: "VALUES or SELECT",
+                });
+            }
+        };
+
+        Ok(InsertStmt {
+            table,
+            columns,
+            source,
+        })
+    }
+
+    // A pratt parser inspired by core dumped https://www.youtube.com/watch?v=0c8b7YfsBKs&t=658s
+    // and this article for bp reference https://www.youtube.com/redirect?event=video_description&redir_token=QUFFLUhqbE5UajJUTjBDdzFtMHlFLURweGJLTk90eXJ1UXxBQ3Jtc0trVXl2aTE5MU1BR0M3aWtQaG5hTjJmRnVFdUhJQy1veDZYb3ViSVdqVEZVdWNwYW5VRHdqV0RwNGs0dXRTUUtTODl5Y3lfVHctZFltbllhOWJiTE85QUE2Um9wWWNMdzFlRWdfRG5nTU1TbjBqY2FpWQ&q=https%3A%2F%2Fmatklad.github.io%2F2020%2F04%2F13%2Fsimple-but-powerful-pratt-parsing.html&v=0c8b7YfsBKs
     fn parse_expr(&mut self, min_bp: u8) -> Result<Expr> {
+        let mut lhs = match self.peek() {
+            Token::Not => {
+                self.eat(&Token::Not);
+
+                if self.peek() == &Token::Exists {
+                    self.advance();
+
+                    self.expect(&Token::LParen)?;
+                    let q = self.parse_select()?;
+                    self.expect(&Token::RParen)?;
+
+                    Expr::Exists {
+                        query: Box::new(q),
+                        neg: true,
+                    }
+                } else {
+                    Expr::UnaryOp {
+                        op: UnaryOp::Not,
+                        expr: Box::new(self.parse_expr(5)?),
+                    }
+                }
+            }
+
+            Token::Minus => {
+                self.advance();
+                Expr::UnaryOp {
+                    op: UnaryOp::Neg,
+                    expr: Box::new(self.parse_expr(13)?),
+                }
+            }
+
+            Token::Exists => {
+                self.advance();
+                self.expect(&Token::LParen)?;
+                let q = self.parse_select()?;
+                self.expect(&Token::RParen)?;
+                Expr::Exists {
+                    query: Box::new(q),
+                    neg: false,
+                }
+            }
+
+            _ => self.parse_primary()?,
+        };
+
         todo!()
+    }
+
+    fn parse_primary(&mut self) -> Result<Expr> {
+        match self.advance() {
+            Token::Number(n) => Ok(Expr::Literal(Literal::Number(n))),
+            Token::String(n) => Ok(Expr::Literal(Literal::String(n))),
+            Token::True => Ok(Expr::Literal(Literal::Bool(true))),
+            Token::False => Ok(Expr::Literal(Literal::Bool(false))),
+            Token::Null => Ok(Expr::Literal(Literal::Null)),
+
+            // SO that COUNT(*) works
+            Token::Star => Ok(Expr::Glob),
+
+            Token::Cast => {
+                self.expect(&Token::LParen);
+                let e = self.parse_expr(0)?;
+                self.expect(&Token::As);
+                let data_type = self.parse_data_type()?;
+            }
+        }
+    }
+
+    fn parse_data_type(&mut self) -> Result<DataType> {
+        match self.advance() {
+            Token::Integer => Ok(DataType::Integer),
+            Token::Float => Ok(DataType::Float),
+            Token::Bool => Ok(DataType::Bool),
+            Token::Text => Ok(DataType::String),
+
+            got => Err(ParseError::UnexpectedToken {
+                got,
+                expected: "INTEGER | FLOAT | BOOL | TEXT",
+            }),
+        }
     }
 }
 
@@ -282,7 +414,7 @@ fn token_desc(t: &Token) -> &'static str {
 #[cfg(test)]
 mod tests {
     use crate::{
-        ast::{Expr, Ident, SelectItem, SelectStmt, SetQuantifier, Stmt, TableRef},
+        ast::{Expr, Ident, InsertSource, SelectItem, SelectStmt, SetQuantifier, Stmt, TableRef},
         lex::{Lex, Token},
         parser::Parser,
     };
@@ -321,5 +453,41 @@ mod tests {
                 offset: None,
             })
         );
+    }
+
+    #[test]
+    fn test_insert_values() {
+        let mut lexer = Lex::new();
+        lexer.input = "INSERT INTO users (id, name) VALUES (1, 'Alice')"
+            .chars()
+            .collect();
+
+        let tokens: Vec<Token> = lexer
+            .map(|t| t.unwrap())
+            .take_while(|t| *t != Token::EOF)
+            .chain(std::iter::once(Token::EOF))
+            .collect();
+
+        let mut parser = Parser::new(tokens);
+        let stmt = parser.parse().unwrap();
+
+        match stmt {
+            Stmt::Insert(insert) => {
+                assert_eq!(insert.table, Ident("users".to_string()));
+                assert_eq!(
+                    insert.columns,
+                    vec![Ident("id".to_string()), Ident("name".to_string())]
+                );
+
+                match insert.source {
+                    InsertSource::Values(rows) => {
+                        assert_eq!(rows.len(), 1);
+                        assert_eq!(rows[0].len(), 2);
+                    }
+                    _ => panic!("Expected VALUES source"),
+                }
+            }
+            _ => panic!("Expected INSERT statement"),
+        }
     }
 }

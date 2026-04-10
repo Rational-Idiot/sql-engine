@@ -25,9 +25,9 @@ pub struct SelectStmt {
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct InsertStmt {
-    table: Ident,
-    columns: Vec<Ident>, // empty => All
-    source: InsertSource,
+    pub table: Ident,
+    pub columns: Vec<Ident>, // empty => All
+    pub source: InsertSource,
 }
 
 #[derive(Debug, PartialEq, Eq)]
