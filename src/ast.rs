@@ -62,16 +62,16 @@ pub enum CreateStmt {
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct CreateTableStmt {
-    name: Ident,
-    columns: Vec<ColumnDef>,
-    flag: bool, //If not exists clause
+    pub name: Ident,
+    pub columns: Vec<ColumnDef>,
+    pub flag: bool, //If not exists clause
 }
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct ColumnDef {
-    name: Ident,
-    data_type: DataType,
-    constraints: Vec<ColumnConstraint>,
+    pub name: Ident,
+    pub data_type: DataType,
+    pub constraints: Vec<ColumnConstraint>,
 }
 
 #[derive(Debug, PartialEq, Eq)]

@@ -2,9 +2,9 @@ use std::fmt;
 
 use crate::{
     ast::{
-        Assignment, BinaryOp, DataType, DeleteStmt, Expr, Ident, InsertSource, InsertStmt, Literal,
-        Order, SelectItem, SelectStmt, SetQuantifier, SortType, Stmt, TableRef, UnaryOp,
-        UpdateStmt,
+        Assignment, BinaryOp, ColumnConstraint, ColumnDef, CreateStmt, CreateTableStmt, DataType,
+        DeleteStmt, Expr, Ident, InsertSource, InsertStmt, Literal, Order, SelectItem, SelectStmt,
+        SetQuantifier, SortType, Stmt, TableRef, UnaryOp, UpdateStmt,
     },
     lex::Token,
 };
@@ -121,6 +121,8 @@ impl Parser {
             Token::Select => Ok(Stmt::Select(self.parse_select()?)),
             Token::Insert => Ok(Stmt::Insert(self.parse_insert()?)),
             Token::Update => Ok(Stmt::Update(self.parse_update()?)),
+            Token::Delete => Ok(Stmt::Delete(self.parse_delete()?)),
+            Token::Create => Ok(Stmt::Create(self.parse_create()?)),
 
             got => Err(ParseError::UnexpectedToken {
                 got: got.clone(),
@@ -331,6 +333,81 @@ impl Parser {
         Ok(DeleteStmt {
             table,
             where_clause,
+        })
+    }
+
+    fn parse_create(&mut self) -> Result<CreateStmt> {
+        self.expect(&Token::Create)?;
+
+        match self.peek() {
+            Token::Table => Ok(CreateStmt::Table(self.parse_create_table()?)),
+            //TODO: Add views and stuff
+            got => Err(ParseError::UnexpectedToken {
+                got: got.clone(),
+                expected: "TABLE",
+            }),
+        }
+    }
+
+    fn parse_create_table(&mut self) -> Result<CreateTableStmt> {
+        self.expect(&Token::Table)?;
+
+        let flag = if self.eat(&Token::If) {
+            self.expect(&Token::Not);
+            self.expect(&Token::Exists);
+            true
+        } else {
+            false
+        };
+
+        let name = self.expect_ident()?;
+        self.expect(&Token::LParen)?;
+        let columns = self.comma_sep(Self::parse_column_def)?;
+        self.expect(&Token::RParen)?;
+
+        Ok(CreateTableStmt {
+            name,
+            columns,
+            flag,
+        })
+    }
+
+    fn parse_column_def(&mut self) -> Result<ColumnDef> {
+        let name = self.expect_ident()?;
+        let data_type = self.parse_data_type()?;
+
+        let mut constraints = vec![];
+        loop {
+            match self.peek() {
+                Token::Primary => {
+                    self.advance();
+                    self.expect(&Token::Key)?;
+                    constraints.push(ColumnConstraint::PrimaryKey);
+                }
+
+                Token::Not => {
+                    self.advance();
+                    self.expect(&Token::Null)?;
+                    constraints.push(ColumnConstraint::NotNull);
+                }
+
+                Token::Unique => {
+                    self.advance();
+                    constraints.push(ColumnConstraint::Unique);
+                }
+                Token::Default => {
+                    self.advance();
+                    constraints.push(ColumnConstraint::Default(self.parse_expr(0)?));
+                }
+
+                _ => break,
+            }
+        }
+
+        Ok(ColumnDef {
+            name,
+            data_type,
+            constraints,
         })
     }
 
