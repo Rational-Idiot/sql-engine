@@ -38,15 +38,15 @@ pub enum InsertSource {
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct UpdateStmt {
-    table: TableRef,
-    assign: Vec<Assignment>,
-    where_clause: Option<Expr>,
+    pub table: TableRef,
+    pub assign: Vec<Assignment>,
+    pub where_clause: Option<Expr>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct Assignment {
-    column: Ident,
-    value: Expr,
+    pub column: Ident,
+    pub value: Expr,
 }
 
 #[derive(Debug, PartialEq, Eq)]

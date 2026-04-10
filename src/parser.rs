@@ -2,8 +2,8 @@ use std::fmt;
 
 use crate::{
     ast::{
-        BinaryOp, DataType, Expr, Ident, InsertSource, InsertStmt, Literal, Order, SelectItem,
-        SelectStmt, SetQuantifier, SortType, Stmt, TableRef, UnaryOp,
+        Assignment, BinaryOp, DataType, Expr, Ident, InsertSource, InsertStmt, Literal, Order,
+        SelectItem, SelectStmt, SetQuantifier, SortType, Stmt, TableRef, UnaryOp, UpdateStmt,
     },
     lex::Token,
 };
@@ -119,6 +119,7 @@ impl Parser {
         match self.peek() {
             Token::Select => Ok(Stmt::Select(self.parse_select()?)),
             Token::Insert => Ok(Stmt::Insert(self.parse_insert()?)),
+            Token::Update => Ok(Stmt::Update(self.parse_update()?)),
 
             got => Err(ParseError::UnexpectedToken {
                 got: got.clone(),
@@ -288,6 +289,32 @@ impl Parser {
         })
     }
 
+    fn parse_update(&mut self) -> Result<UpdateStmt> {
+        self.expect(&Token::Update)?;
+        let table = self.parse_table()?;
+        self.expect(&Token::Set)?;
+
+        let assign = self.comma_sep(|p| {
+            let column = p.expect_ident()?;
+            p.expect(&Token::Equal)?;
+            let value = p.parse_expr(0)?;
+
+            Ok(Assignment { column, value })
+        })?;
+
+        let where_clause = if self.eat(&Token::Where) {
+            Some(self.parse_expr(0)?)
+        } else {
+            None
+        };
+
+        Ok(UpdateStmt {
+            table,
+            assign,
+            where_clause,
+        })
+    }
+
     // A pratt parser inspired by core dumped https://www.youtube.com/watch?v=0c8b7YfsBKs&t=658s
     // and this article for bp reference https://www.youtube.com/redirect?event=video_description&redir_token=QUFFLUhqbE5UajJUTjBDdzFtMHlFLURweGJLTk90eXJ1UXxBQ3Jtc0trVXl2aTE5MU1BR0M3aWtQaG5hTjJmRnVFdUhJQy1veDZYb3ViSVdqVEZVdWNwYW5VRHdqV0RwNGs0dXRTUUtTODl5Y3lfVHctZFltbllhOWJiTE85QUE2Um9wWWNMdzFlRWdfRG5nTU1TbjBqY2FpWQ&q=https%3A%2F%2Fmatklad.github.io%2F2020%2F04%2F13%2Fsimple-but-powerful-pratt-parsing.html&v=0c8b7YfsBKs
     fn parse_expr(&mut self, min_bp: u8) -> Result<Expr> {
@@ -425,6 +452,7 @@ impl Parser {
                 continue;
             }
 
+            // The binding powers
             let (op, l_bp, r_bp) = match self.peek() {
                 Token::Or => (BinaryOp::Or, 1u8, 2u8),
                 Token::And => (BinaryOp::And, 3, 4),
@@ -677,7 +705,7 @@ mod tests {
     }
 
     #[test]
-    fn test_insert_values_with_expressions() {
+    fn insert_values_with_expressions() {
         let mut lexer = Lex::new();
         lexer.input = "INSERT INTO users (id, score, flag) \
                    VALUES (1 + 2 * 3, (4 + 5) * 6, NOT 0)"
@@ -714,7 +742,7 @@ mod tests {
     }
 
     #[test]
-    fn test_insert_select_with_expressions() {
+    fn insert_select_with_expressions() {
         let mut lexer = Lex::new();
         lexer.input = "INSERT INTO users \
                    SELECT id, score * 2 + 5, NOT active \
@@ -756,7 +784,7 @@ mod tests {
     }
 
     #[test]
-    fn test_select_complex_expressions() {
+    fn select_complex_expressions() {
         let mut lexer = Lex::new();
         lexer.input = "SELECT a + b * c AS result, \
                           NOT (x > 10 OR y < 5) AS flag \
