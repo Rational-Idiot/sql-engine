@@ -2,7 +2,7 @@
 use core::fmt;
 use std::collections::HashMap;
 
-use crate::ast::DataType;
+use crate::ast::{ColumnConstraint, CreateTableStmt, DataType};
 
 #[derive(Debug, PartialEq)]
 pub enum CatalogError {
@@ -23,6 +23,9 @@ impl fmt::Display for CatalogError {
     }
 }
 
+impl std::error::Error for CatalogError {}
+pub type Result<T> = std::result::Result<T, CatalogError>;
+
 #[derive(Debug, Clone)]
 pub struct Column {
     pub id: usize,
@@ -40,6 +43,7 @@ pub struct Column {
 #[derive(Debug, Clone)]
 pub struct Table {
     pub name: String,
+    pub name_lower: String,
     cols: Vec<Column>,
 }
 
@@ -76,5 +80,49 @@ impl Catalog {
 
     pub fn table_names(&self) -> impl Iterator<Item = &str> {
         self.tables.keys().map(String::as_str)
+    }
+
+    pub fn create_table(&mut self, stmt: CreateTableStmt) -> Result<()> {
+        let name_lower = stmt.name.0.to_lowercase();
+
+        let mut cols = Vec::with_capacity(stmt.columns.len());
+
+        for (id, def) in stmt.columns.iter().enumerate() {
+            let col_lower = def.name.0.to_lowercase();
+            let primary_key = def
+                .constraints
+                .iter()
+                .any(|c| matches!(c, ColumnConstraint::PrimaryKey));
+            let unique = primary_key
+                || def
+                    .constraints
+                    .iter()
+                    .any(|c| matches!(c, ColumnConstraint::Unique));
+            let nullable = !primary_key
+                && !def
+                    .constraints
+                    .iter()
+                    .any(|c| matches!(c, ColumnConstraint::NotNull));
+
+            cols.push(Column {
+                id,
+                name: def.name.0.clone(),
+                name_lower: col_lower,
+                data_type: def.data_type.clone(),
+                nullable,
+                primary_key,
+                unique,
+            });
+        }
+
+        self.tables.insert(
+            name_lower.clone(),
+            Table {
+                name: stmt.name.0,
+                name_lower,
+                cols,
+            },
+        );
+        Ok(())
     }
 }
