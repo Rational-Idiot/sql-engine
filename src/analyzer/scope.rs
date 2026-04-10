@@ -1,6 +1,10 @@
+#![allow(dead_code)]
 use std::fmt;
 
-use crate::{catalog::Table, sql::ast::DataType};
+use crate::{
+    catalog::{Column, Table},
+    sql::ast::DataType,
+};
 
 pub struct ColRef {
     pub table_name: String,
@@ -11,11 +15,15 @@ pub struct ColRef {
     pub nullable: bool,
 }
 
+#[derive(Debug)]
 pub enum ScopeError {
     UnknownTable(String),
     UnknownColumn(String),
     DuplicateAlias(String),
 }
+
+impl std::error::Error for ScopeError {}
+type Result<T> = std::result::Result<T, ScopeError>;
 
 impl fmt::Display for ScopeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -53,5 +61,22 @@ impl<'parent, 'catalog> Scope<'parent, 'catalog> {
             entries: Vec::new(),
             parent: Some(parent),
         }
+    }
+
+    fn make_ref(alias: &str, table: &Table, col: &Column) -> ColRef {
+        ColRef {
+            table_name: table.name.clone(),
+            table_alias: alias.to_string(),
+            col_name: col.name.clone(),
+            col_idx: col.id,
+            data_type: col.data_type.clone(),
+            nullable: col.nullable,
+        }
+    }
+
+    fn resolve_col(&self, col_lower: &str) -> Result<ColRef> {
+        let mut found: Vec<Column> = Vec::new();
+
+        todo!()
     }
 }
