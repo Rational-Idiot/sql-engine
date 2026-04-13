@@ -52,7 +52,7 @@ pub struct Table {
 }
 
 impl Table {
-    pub fn column(&self, name_lower: &str) -> Option<&Column> {
+    pub fn find_column(&self, name_lower: &str) -> Option<&Column> {
         self.cols.iter().find(|c| c.name_lower == name_lower)
     }
 

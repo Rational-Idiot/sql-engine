@@ -6,6 +6,7 @@ use crate::{
     sql::ast::DataType,
 };
 
+#[derive(Clone)]
 pub struct ColRef {
     pub table_name: String,
     pub table_alias: String,
@@ -19,7 +20,9 @@ pub struct ColRef {
 pub enum ScopeError {
     UnknownTable(String),
     UnknownColumn(String),
+    UnknownQualifiedColumn(String, String), // table, col
     DuplicateAlias(String),
+    AmbiguousColumn(String, String), // col, (String of table aliases)
 }
 
 impl std::error::Error for ScopeError {}
@@ -32,6 +35,10 @@ impl fmt::Display for ScopeError {
             ScopeError::UnknownColumn(c) => write!(f, "Unkown column '{c}'"),
             ScopeError::DuplicateAlias(a) => {
                 write!(f, "alias '{a}' has already been used in this clause")
+            }
+
+            ScopeError::AmbiguousColumn(c, t) => {
+                write!(f, "Column '{c}' is ambiguous, found in: {t}")
             }
         }
     }
@@ -75,8 +82,53 @@ impl<'parent, 'catalog> Scope<'parent, 'catalog> {
     }
 
     fn resolve_col(&self, col_lower: &str) -> Result<ColRef> {
-        let mut found: Vec<Column> = Vec::new();
+        let mut found: Vec<ColRef> = Vec::new();
 
-        todo!()
+        for entry in &self.entries {
+            if let Some(c) = entry.table.column(col_lower) {
+                found.push(Self::make_ref(&entry.alias, entry.table, c));
+            }
+        }
+
+        if found.is_empty() {
+            return match self.parent {
+                Some(p) => p.resolve_col(col_lower),
+                None => Err(ScopeError::UnknownColumn(col_lower.to_string())),
+            };
+        }
+
+        if found.len() > 1 {
+            let tables = found
+                .iter()
+                .map(|t| t.table_alias.as_str())
+                .collect::<Vec<_>>()
+                .join(", ");
+
+            return Err(ScopeError::AmbiguousColumn(col_lower.to_string(), tables));
+        }
+
+        return Ok(found.into_iter().next().unwrap()); // Return without moving
+    }
+
+    // Find the home for columns like table.column
+    pub fn resolve_qualified(&self, table_lower: &str, col_lower: &str) -> Result<ColRef> {
+        let entry = self
+            .entries
+            .iter()
+            .find(|e| e.alias_lower == table_lower || e.table.name_lower == table_lower);
+
+        match entry {
+            Some(e) => {
+                let c = e.table.find_column(col_lower).ok_or_else(|| {
+                    ScopeError::UnknownQualifiedColumn(e.alias_lower.clone(), col_lower.to_string())
+                })?;
+
+                Ok(Self::make_ref(&e.alias, e.table, c))
+            }
+            None => match self.parent {
+                Some(p) => p.resolve_qualified(table_lower, col_lower),
+                None => Err(ScopeError::UnknownTable(table_lower.to_string())),
+            },
+        }
     }
 }

@@ -2,6 +2,7 @@ use std::fmt;
 
 use crate::sql::{ast::*, lex::Token};
 
+#[derive(Debug)]
 pub struct Parser {
     tokens: Vec<Token>,
     pos: usize,

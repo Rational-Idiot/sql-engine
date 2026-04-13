@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
+#[derive(Debug, Clone)]
 pub struct Lex {
     pub input: Vec<char>,
     pos: usize,
