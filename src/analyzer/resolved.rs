@@ -24,6 +24,18 @@ impl Ty {
     }
 }
 
+impl std::fmt::Display for Ty {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Ty::Int => write!(f, "INTEGER"),
+            Ty::Float => write!(f, "FLOAT"),
+            Ty::Bool => write!(f, "BOOL"),
+            Ty::Text => write!(f, "TEXT"),
+            Ty::Null => write!(f, "NULL"),
+        }
+    }
+}
+
 pub enum RExpr {
     Literal(Literal, Ty),
     Column(ColRef, Ty),
