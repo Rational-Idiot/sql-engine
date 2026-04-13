@@ -1,6 +1,6 @@
 # Name: To Be Decided
 
-A powerful sql engine that (hopefully) supports all common sql keywords
+A powerful sql engine that (hopefully) supports all common sql keywords - {The actual idea is much bigger}
 
 ## Todo
 

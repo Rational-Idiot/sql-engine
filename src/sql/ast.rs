@@ -227,7 +227,7 @@ pub enum Expr {
         neg: bool,
     },
 
-    // Function(Call),
+    Function(Call),
     Cast {
         expr: Box<Expr>,
         data_type: DataType,
@@ -236,10 +236,10 @@ pub enum Expr {
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct Call {
-    name: Ident,
-    args: Args,
-    distinct: bool,
-    filter: Option<Box<Expr>>, // aggregate
+    pub name: Ident,
+    pub args: Args,
+    pub distinct: bool,
+    pub filter: Option<Box<Expr>>, // aggregate
 }
 
 #[derive(Debug, PartialEq, Eq)]

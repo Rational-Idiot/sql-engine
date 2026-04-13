@@ -766,6 +766,11 @@ impl Parser {
                     return Ok(Expr::Identifier(Ident(format!("{id}.{}", col.0))));
                 }
 
+                // Must be a function name(...)
+                if self.eat(&Token::LParen) {
+                    return parse_call(id)?;
+                }
+
                 Ok(Expr::Identifier(Ident(id)))
             }
 
@@ -773,6 +778,58 @@ impl Parser {
                 got,
                 expected: "Expression",
             }),
+        }
+    }
+
+    fn parse_call(&mut self, id: String) -> Result<Expr> {
+        // COUNT(*)
+        if self.peek() == &Token::Star {
+            self.advance();
+            self.expect(&Token::RParen);
+            let f = self.parse_filter()?;
+
+            return Ok(Expr::Function(Call {
+                name: Ident(id),
+                args: Args::Star,
+                distinct: false,
+                filter: f,
+            }));
+        }
+
+        // f()
+        if self.eat(&Token::RParen) {
+            let f = self.parse_filter()?;
+            return Ok(Expr::Function(Call {
+                name: Ident(id),
+                args: Args::List(vec![]),
+                distinct: false,
+                filter: f,
+            }));
+        }
+
+        // f([disticnt] a1, a3, ...)
+        let distinct = self.eat(&Token::Distinct);
+        let args = self.comma_sep(|p| p.parse_expr(0))?;
+        self.expect(&Token::RParen)?;
+        let f = self.parse_filter()?;
+
+        Ok(Expr::Function(Call {
+            name: Ident(id),
+            args: Args::List(args),
+            distinct,
+            filter: f,
+        }))
+    }
+
+    fn parse_filter(&mut self) -> Result<Option<Box<Expr>>> {
+        if self.eat(&Token::Filter) {
+            self.expect(&Token::LParen)?;
+            self.expect(&Token::Where)?;
+            let e = self.parse_expr(0)?;
+            self.expect(&Token::RParen)?;
+            Ok(Some(Box::new(e)))
+        } else {
+            Ok(None)
         }
     }
 
