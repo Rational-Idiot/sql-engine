@@ -3,12 +3,25 @@ use crate::{
     sql::ast::{BinaryOp, JoinKind, Literal, SetQuantifier, SortType, UnaryOp},
 };
 
+#[derive(PartialEq, Clone, Copy)]
 pub enum Ty {
     Int,
     Float,
     Bool,
     Text,
     Null,
+}
+
+impl Ty {
+    pub fn unify(a: &Ty, b: &Ty) -> Option<Ty> {
+        match (a, b) {
+            (Ty::Null, other) | (other, Ty::Null) => Some(*other),
+            (Ty::Text, _) | (_, Ty::Text) => Some(Ty::Text),
+            (Ty::Int, Ty::Float) | (Ty::Float, Ty::Int) => Some(Ty::Float),
+            _ if a == b => Some(*a),
+            _ => None,
+        }
+    }
 }
 
 pub enum RExpr {
