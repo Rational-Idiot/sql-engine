@@ -4,7 +4,7 @@ use db::sql::{
 };
 
 fn main() {
-    let query = " SELECT u.id, u.name, u.score FROM users u WHERE u.score BETWEEN 10 AND 100 AND u.id IN (SELECT id FROM active_users) AND EXISTS ( SELECT * FROM logs l WHERE l.user_id = u.id AND l.action LIKE 'login%') OR u.name ILIKE 'A%' ORDER BY u.score DESC, u.name ASC LIMIT 10 OFFSET 5; ";
+    let query = "SELECT -- Character Function to format the name INITCAP(first_name || ' ' || last_name) AS full_name, -- Numeric Function to round the income for readability ROUND(annual_income, -3) AS rounded_income, -- Data Mining Function to get the default probability PREDICTION_PROBABILITY(loan_default_model, 'YES' USING *) AS default_probability FROM Loan_applicant WHERE annual_income > 100000 ORDER BY default_probability DESC FETCH FIRST 5 ROWS ONLY;";
 
     let mut lexer = Lex::new();
     lexer.input = query.chars().collect();

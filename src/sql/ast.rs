@@ -775,7 +775,47 @@ impl Expr {
                 indent(f, indent_lvl)?;
                 write!(f, ")")
             }
+            Expr::Function(call) => {
+                write!(f, "{}", call)
+            }
         }
+    }
+}
+
+impl fmt::Display for Call {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}(", self.name.0)?;
+
+        // DISTINCT
+        if self.distinct {
+            write!(f, "DISTINCT ")?;
+        }
+
+        // Args
+        match &self.args {
+            Args::Star => {
+                write!(f, "*")?;
+            }
+            Args::List(exprs) => {
+                for (i, e) in exprs.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    e.fmt_with_indent(f, 0, 0)?;
+                }
+            }
+        }
+
+        write!(f, ")")?;
+
+        // FILTER clause (for aggregates)
+        if let Some(filter) = &self.filter {
+            write!(f, " FILTER (WHERE ")?;
+            filter.fmt_with_indent(f, 0, 0)?;
+            write!(f, ")")?;
+        }
+
+        Ok(())
     }
 }
 

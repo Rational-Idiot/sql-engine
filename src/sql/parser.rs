@@ -768,7 +768,7 @@ impl Parser {
 
                 // Must be a function name(...)
                 if self.eat(&Token::LParen) {
-                    return parse_call(id)?;
+                    return self.parse_call(id);
                 }
 
                 Ok(Expr::Identifier(Ident(id)))
@@ -785,7 +785,7 @@ impl Parser {
         // COUNT(*)
         if self.peek() == &Token::Star {
             self.advance();
-            self.expect(&Token::RParen);
+            self.expect(&Token::RParen)?;
             let f = self.parse_filter()?;
 
             return Ok(Expr::Function(Call {

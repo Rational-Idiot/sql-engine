@@ -6,7 +6,7 @@ use crate::{
     sql::ast::DataType,
 };
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct ColRef {
     pub table_name: String,
     pub table_alias: String,
@@ -178,4 +178,98 @@ impl<'parent, 'catalog> Scope<'parent, 'catalog> {
                 .collect(),
         )
     }
+}
+
+// ThankGPT
+#[test]
+fn integration_scope_with_catalog_and_constraints() {
+    use crate::catalog::catalog::*;
+    use crate::sql::ast::*;
+
+    let mut catalog = Catalog::new();
+
+    // CREATE TABLE users
+    catalog
+        .create_table(CreateTableStmt {
+            name: Ident("users".into()),
+            flag: false,
+            columns: vec![
+                ColumnDef {
+                    name: Ident("id".into()),
+                    data_type: DataType::Integer,
+                    constraints: vec![ColumnConstraint::PrimaryKey],
+                },
+                ColumnDef {
+                    name: Ident("email".into()),
+                    data_type: DataType::Integer,
+                    constraints: vec![ColumnConstraint::Unique],
+                },
+                ColumnDef {
+                    name: Ident("name".into()),
+                    data_type: DataType::Integer,
+                    constraints: vec![],
+                },
+            ],
+        })
+        .unwrap();
+
+    // CREATE TABLE orders
+    catalog
+        .create_table(CreateTableStmt {
+            name: Ident("orders".into()),
+            flag: false,
+            columns: vec![
+                ColumnDef {
+                    name: Ident("id".into()),
+                    data_type: DataType::Integer,
+                    constraints: vec![ColumnConstraint::PrimaryKey],
+                },
+                ColumnDef {
+                    name: Ident("user_id".into()),
+                    data_type: DataType::Integer,
+                    constraints: vec![ColumnConstraint::NotNull],
+                },
+            ],
+        })
+        .unwrap();
+
+    let users = catalog.table("users").unwrap();
+    let orders = catalog.table("orders").unwrap();
+
+    let mut scope = Scope::new();
+    scope.add("u".into(), users).unwrap();
+    scope.add("o".into(), orders).unwrap();
+
+    // ✅ Ambiguous column
+    let err = scope.resolve_col("id").unwrap_err();
+    match err {
+        ScopeError::AmbiguousColumn(col, tables) => {
+            assert_eq!(col, "id");
+            assert!(tables.contains("u"));
+            assert!(tables.contains("o"));
+        }
+        _ => panic!("Expected ambiguity"),
+    }
+
+    // ✅ Qualified works
+    let col = scope.resolve_qualified("u", "id").unwrap();
+    assert_eq!(col.table_alias, "u");
+    assert_eq!(col.nullable, false); // PK → not nullable
+    assert!(col.data_type == DataType::Integer);
+
+    // ✅ Unique column still nullable unless NOT NULL
+    let email = scope.resolve_qualified("users", "email").unwrap();
+    assert_eq!(email.nullable, true);
+
+    // ✅ NOT NULL propagation
+    let user_id = scope.resolve_qualified("o", "user_id").unwrap();
+    assert_eq!(user_id.nullable, false);
+
+    // ✅ Star expansion
+    let star = scope.resolve_star();
+    assert_eq!(star.len(), 5); // 3 + 2 columns
+
+    // Order matters → insertion order
+    assert_eq!(star[0].table_alias, "u");
+    assert_eq!(star[3].table_alias, "o");
 }
