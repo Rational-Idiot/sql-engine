@@ -36,6 +36,13 @@ impl std::fmt::Display for Ty {
     }
 }
 
+pub enum RStmt {
+    Select(RSelect),
+    Insert(RInsert),
+    Update(RUpdate),
+    Delete(RDelete),
+}
+
 pub enum RExpr {
     Literal(Literal, Ty),
     Column(ColRef, Ty),
