@@ -66,7 +66,7 @@ impl<'parent, 'catalog> Scope<'parent, 'catalog> {
         }
     }
 
-    pub fn add(&mut self, alias: String, tbael: &'catalog Table) -> Result<()> {
+    pub fn add(&mut self, alias: String, table: &'catalog Table) -> Result<()> {
         let alias_lower = alias.to_ascii_lowercase();
 
         if self.entries.iter().any(|e| e.alias_lower == alias_lower) {
