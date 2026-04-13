@@ -3,11 +3,13 @@ use std::fmt;
 
 use crate::{
     analyzer::{
-        resolved::{RExpr, RJoin, RJoinConstraint, RSelect, RStmt, RTableRef},
+        resolved::{RExpr, RJoin, RJoinConstraint, RSelect, RSelectItem, RStmt, RTableRef, Ty},
         scope::{Scope, ScopeError},
     },
     catalog::{Table, catalog::Catalog},
-    sql::ast::{Expr, JoinClause, JoinConstraint, SelectStmt, Stmt, TableRef},
+    sql::ast::{
+        DataType, Expr, JoinClause, JoinConstraint, SelectItem, SelectStmt, Stmt, TableRef,
+    },
 };
 
 #[derive(Debug)]
@@ -34,6 +36,15 @@ pub struct Analyzer<'c> {
     catalog: &'c Catalog,
 }
 
+fn dt_to_ty(dt: &DataType) -> Ty {
+    match dt {
+        DataType::Float => Ty::Float,
+        DataType::Integer => Ty::Int,
+        DataType::String => Ty::Text,
+        DataType::Bool => Ty::Bool,
+    }
+}
+
 impl<'c> Analyzer<'c> {
     pub fn new(catalog: &'c mut Catalog) -> Self {
         Self { catalog }
@@ -48,25 +59,83 @@ impl<'c> Analyzer<'c> {
 
     pub fn analyze_select(&self, stmt: SelectStmt) -> Result<RSelect> {
         let mut scope = Scope::new();
-        let from = stmt
-            .from
-            .map(|tr| self.add_to_scope(tr, &mut scope))
-            .transpose()?;
+        let from = match stmt.from {
+            Some(tr) => Some(self.add_to_scope(tr, &mut scope)?),
+            None => None,
+        };
 
-        let joins = stmt.joins.into_iter().map(|j| self.analyze_join(j, &mut scope)).collect()::<Result<Vec<_>>>()?;
+        let where_clause = match stmt.where_clause {
+            Some(e) => Some(self.analyze_expr(e, &scope)?),
+            None => None,
+        };
+
+        let having = match stmt.having {
+            Some(e) => Some(self.analyze_expr(e, &scope)?),
+            None => None,
+        };
+
+        let joins = stmt
+            .joins
+            .into_iter()
+            .map(|j| self.analyze_join(j, &mut scope))
+            .collect::<Result<Vec<_>>>()?;
+
+        let group_by = stmt
+            .group_by
+            .into_iter()
+            .map(|e| self.analyze_expr(e, &scope))
+            .collect::<Result<Vec<_>>>();
+
+        let cols = stmt
+            .col
+            .iter()
+            .map(|i| self.expand_select_item(i, &scope))
+            .collect::<Result<Vec<_>>>()?
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>();
 
         todo!()
     }
 
-    pub fn analyze_join(&self, j: JoinClause, scope: &mut Scope<'_, 'c>) -> Result<RJoin> {
-        let table = self.add_to_scope(j.table, scope)?; 
-        let constraint = match j.constraint {
-        JoinConstraint::On(e) => RJoinConstraint::On(self.analyze_expr(e, scope)?),
-        JoinConstraint::Natural => RJoinConstraint::Natural,
-        JoinConstraint::Using(v) => RJoinConstraint::Using(v.into_iter().map(|i| i.0.to_lowercase()).collect()),
-    };
+    pub fn expand_select_item(&self, item: &SelectItem, scope: &Scope) -> Result<Vec<RSelectItem>> {
+        match &item.expr {
+            Expr::Glob => {
+                let cols = scope
+                    .resolve_star()
+                    .into_iter()
+                    .map(|cr| {
+                        let ty = dt_to_ty(&cr.data_type);
+                        let label = cr.col_name.clone();
 
-    Ok(RJoin { kind: j.kind, table, constraint })
+                        RSelectItem {
+                            expr: RExpr::Column(cr, ty),
+                            label,
+                        }
+                    })
+                    .collect();
+
+                Ok(cols)
+            }
+            _ => todo!(),
+        }
+    }
+
+    pub fn analyze_join(&self, j: JoinClause, scope: &mut Scope<'_, 'c>) -> Result<RJoin> {
+        let table = self.add_to_scope(j.table, scope)?;
+        let constraint = match j.constraint {
+            JoinConstraint::On(e) => RJoinConstraint::On(self.analyze_expr(e, scope)?),
+            JoinConstraint::Natural => RJoinConstraint::Natural,
+            JoinConstraint::Using(v) => {
+                RJoinConstraint::Using(v.into_iter().map(|i| i.0.to_lowercase()).collect())
+            }
+        };
+
+        Ok(RJoin {
+            kind: j.kind,
+            table,
+            constraint,
+        })
     }
 
     pub fn analyze_expr(&self, e: Expr, scope: &Scope<'_, '_>) -> Result<RExpr> {
