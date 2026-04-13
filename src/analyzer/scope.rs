@@ -103,7 +103,7 @@ impl<'parent, 'catalog> Scope<'parent, 'catalog> {
         let mut found: Vec<ColRef> = Vec::new();
 
         for entry in &self.entries {
-            if let Some(c) = entry.table.column(col_lower) {
+            if let Some(c) = entry.table.find_column(col_lower) {
                 found.push(Self::make_ref(&entry.alias, entry.table, c));
             }
         }

@@ -6,6 +6,8 @@ A powerful sql engine that (hopefully) supports all common sql keywords
 
 - [x] Build the lexer
 - [x] Create a robust AST
-- [ ] Add Joins To the Parser
+- [x] Add Joins To the Parser
+- [x] Make the Scope Resolver
+- [ ] Make a decorated AST
 - [ ] Build the Actual Engine
 - [ ] Profit
