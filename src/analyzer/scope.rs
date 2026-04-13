@@ -33,6 +33,9 @@ impl fmt::Display for ScopeError {
         match self {
             ScopeError::UnknownTable(t) => write!(f, "Unkown table or alias '{t}'"),
             ScopeError::UnknownColumn(c) => write!(f, "Unkown column '{c}'"),
+            ScopeError::UnknownQualifiedColumn(c, t) => {
+                write!(f, "Unkown Qualified column '{c}' for table '{t}'")
+            }
             ScopeError::DuplicateAlias(a) => {
                 write!(f, "alias '{a}' has already been used in this clause")
             }
@@ -61,6 +64,21 @@ impl<'parent, 'catalog> Scope<'parent, 'catalog> {
             entries: Vec::new(),
             parent: None,
         }
+    }
+
+    pub fn add(&mut self, alias: String, tbael: &'catalog Table) -> Result<()> {
+        let alias_lower = alias.to_ascii_lowercase();
+
+        if self.entries.iter().any(|e| e.alias_lower == alias_lower) {
+            return Err(ScopeError::DuplicateAlias(alias_lower));
+        }
+
+        self.entries.push(Entry {
+            alias,
+            alias_lower,
+            table,
+        });
+        Ok(())
     }
 
     pub fn with_parent(parent: &'parent Scope<'parent, 'catalog>) -> Self {
@@ -130,5 +148,34 @@ impl<'parent, 'catalog> Scope<'parent, 'catalog> {
                 None => Err(ScopeError::UnknownTable(table_lower.to_string())),
             },
         }
+    }
+
+    // make SELECT * return all columns
+    pub fn resolve_star(&self) -> Vec<ColRef> {
+        self.entries
+            .iter()
+            .flat_map(|e| {
+                e.table
+                    .cols
+                    .iter()
+                    .map(|c| Self::make_ref(&e.alias, e.table, c))
+            })
+            .collect()
+    }
+
+    pub fn resolve_table_star(&self, alias_lower: &str) -> Option<Vec<ColRef>> {
+        let entry = self
+            .entries
+            .iter()
+            .find(|e| e.alias_lower == alias_lower || e.table.name_lower == alias_lower)?;
+
+        Some(
+            entry
+                .table
+                .cols
+                .iter()
+                .map(|c| Self::make_ref(&entry.alias, entry.table, c))
+                .collect(),
+        )
     }
 }
