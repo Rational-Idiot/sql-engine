@@ -3,7 +3,7 @@
 //Structure is insipred by stoolap - https://github.com/stoolap/stoolap/blob/main/src/parser/ast.rs
 
 use core::fmt;
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq)]
 pub enum Stmt {
     Select(SelectStmt),
     Insert(InsertStmt),
@@ -13,7 +13,7 @@ pub enum Stmt {
     Drop(DropStmt),
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq)]
 pub struct SelectStmt {
     pub col: Vec<SelectItem>,
     pub quantifier: SetQuantifier,
@@ -27,58 +27,58 @@ pub struct SelectStmt {
     pub offset: Option<u64>,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq)]
 pub struct InsertStmt {
     pub table: Ident,
     pub columns: Vec<Ident>, // empty => All
     pub source: InsertSource,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq)]
 pub enum InsertSource {
     Values(Vec<Vec<Expr>>),
     Select(Box<SelectStmt>),
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq)]
 pub struct UpdateStmt {
     pub table: TableRef,
     pub assign: Vec<Assignment>,
     pub where_clause: Option<Expr>,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq)]
 pub struct Assignment {
     pub column: Ident,
     pub value: Expr,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq)]
 pub struct DeleteStmt {
     pub table: TableRef,
     pub where_clause: Option<Expr>,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq)]
 pub enum CreateStmt {
     Table(CreateTableStmt),
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq)]
 pub struct CreateTableStmt {
     pub name: Ident,
     pub columns: Vec<ColumnDef>,
     pub flag: bool, //If not exists clause
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq)]
 pub struct ColumnDef {
     pub name: Ident,
     pub data_type: DataType,
     pub constraints: Vec<ColumnConstraint>,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum DataType {
     Integer,
     Float,
@@ -86,7 +86,7 @@ pub enum DataType {
     String,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq)]
 pub enum ColumnConstraint {
     PrimaryKey,
     NotNull,
@@ -94,42 +94,42 @@ pub enum ColumnConstraint {
     Default(Expr),
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq)]
 pub enum DropStmt {
     Table { name: Ident, if_exists: bool },
     //TODO: Index, View
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Hash)]
 pub struct Ident(pub String);
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq)]
 pub struct Order {
     pub expr: Expr,
     pub dir: SortType,
     // nulls: NullOrdering,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq)]
 pub enum SortType {
     Asc,
     Desc,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq)]
 pub enum NullOrdering {
     First,
     Last,
     Default,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq)]
 pub enum SetQuantifier {
     All,
     Distinct,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq)]
 pub enum TableRef {
     Named {
         name: Ident,
@@ -142,20 +142,20 @@ pub enum TableRef {
     //TODO: TableFunction{name, args, alias}
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq)]
 pub struct SelectItem {
     pub expr: Expr,
     pub alias: Option<Ident>,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq)]
 pub struct JoinClause {
     pub kind: JoinKind,
     pub table: TableRef,
     pub constraint: JoinConstraint,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq)]
 pub enum JoinKind {
     Inner,
     Left,
@@ -165,14 +165,14 @@ pub enum JoinKind {
     //TODO: LeftSemi LeftAnit bhaang bhosda
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq)]
 pub enum JoinConstraint {
     Natural,
     On(Expr),
     Using(Vec<Ident>),
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq)]
 pub enum Expr {
     Literal(Literal),
     Identifier(Ident),
@@ -234,7 +234,7 @@ pub enum Expr {
     },
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq)]
 pub struct Call {
     pub name: Ident,
     pub args: Args,
@@ -242,19 +242,19 @@ pub struct Call {
     pub filter: Option<Box<Expr>>, // aggregate
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq)]
 pub enum Args {
     Star, // COUNT(*)
     List(Vec<Expr>),
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq)]
 pub enum UnaryOp {
     Neg,
     Not,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum BinaryOp {
     Add,
     Sub,
@@ -273,7 +273,7 @@ pub enum BinaryOp {
     Or,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq)]
 pub enum Literal {
     Number(String),
     String(String),
