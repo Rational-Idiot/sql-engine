@@ -6,7 +6,7 @@ use crate::{
         resolved::{RExpr, RJoin, RJoinConstraint, RSelect, RSelectItem, RStmt, RTableRef, Ty},
         scope::{Scope, ScopeError},
     },
-    catalog::{Table, catalog::Catalog},
+    catalog::catalog::Catalog,
     sql::ast::{
         DataType, Expr, JoinClause, JoinConstraint, SelectItem, SelectStmt, Stmt, TableRef,
     },
@@ -42,6 +42,16 @@ fn dt_to_ty(dt: &DataType) -> Ty {
         DataType::Integer => Ty::Int,
         DataType::String => Ty::Text,
         DataType::Bool => Ty::Bool,
+    }
+}
+
+fn auto_label(e: &RExpr) -> String {
+    match e {
+        RExpr::Column(cr, _) => cr.col_name.clone(),
+        RExpr::Literal(lit, _) => format!("{lit}"),
+        RExpr::Function(c) => c.name.clone(),
+        RExpr::Cast { .. } => "cast".into(),
+        _ => "?column?".into(),
     }
 }
 
@@ -117,7 +127,39 @@ impl<'c> Analyzer<'c> {
 
                 Ok(cols)
             }
-            _ => todo!(),
+
+            Expr::QualifiedGlob(id) => {
+                let alias_lower = id.0.to_lowercase();
+                let cols = scope
+                    .resolve_table_star(&alias_lower)
+                    .ok_or_else(|| AnalyzerError::Scope(ScopeError::UnknownTable(id.0.clone())))?;
+
+                let cols = cols
+                    .into_iter()
+                    .map(|cr| {
+                        let ty = dt_to_ty(&cr.data_type);
+                        let label = cr.col_name.clone();
+
+                        RSelectItem {
+                            expr: RExpr::Column(cr, ty),
+                            label,
+                        }
+                    })
+                    .collect();
+
+                Ok(cols)
+            }
+
+            expr => {
+                let rexpr = self.analyze_expr(expr.clone(), scope)?;
+                let label = item
+                    .alias
+                    .as_ref()
+                    .map(|a| a.clone())
+                    .unwrap_or_else(|| auto_label(&rexpr));
+
+                ok(vec![RSelectItem { expr: rexpr, label }])
+            }
         }
     }
 
