@@ -13,7 +13,7 @@ pub enum Stmt {
     Drop(DropStmt),
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct SelectStmt {
     pub col: Vec<SelectItem>,
     pub quantifier: SetQuantifier,
@@ -103,14 +103,14 @@ pub enum DropStmt {
 #[derive(Debug, Clone, PartialEq, Hash)]
 pub struct Ident(pub String);
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct Order {
     pub expr: Expr,
     pub dir: SortType,
     // nulls: NullOrdering,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum SortType {
     Asc,
     Desc,
@@ -123,13 +123,13 @@ pub enum NullOrdering {
     Default,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum SetQuantifier {
     All,
     Distinct,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum TableRef {
     Named {
         name: Ident,
@@ -142,20 +142,20 @@ pub enum TableRef {
     //TODO: TableFunction{name, args, alias}
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct SelectItem {
     pub expr: Expr,
     pub alias: Option<Ident>,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct JoinClause {
     pub kind: JoinKind,
     pub table: TableRef,
     pub constraint: JoinConstraint,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum JoinKind {
     Inner,
     Left,
@@ -165,14 +165,14 @@ pub enum JoinKind {
     //TODO: LeftSemi LeftAnit bhaang bhosda
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum JoinConstraint {
     Natural,
     On(Expr),
     Using(Vec<Ident>),
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum Expr {
     Literal(Literal),
     Identifier(Ident),
@@ -234,7 +234,7 @@ pub enum Expr {
     },
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct Call {
     pub name: Ident,
     pub args: Args,
@@ -242,13 +242,13 @@ pub struct Call {
     pub filter: Option<Box<Expr>>, // aggregate
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum Args {
     Star, // COUNT(*)
     List(Vec<Expr>),
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum UnaryOp {
     Neg,
     Not,
@@ -273,7 +273,7 @@ pub enum BinaryOp {
     Or,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum Literal {
     Number(String),
     String(String),

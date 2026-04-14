@@ -3,7 +3,9 @@ use std::fmt;
 
 use crate::{
     analyzer::{
-        resolved::{RExpr, RJoin, RJoinConstraint, RSelect, RSelectItem, RStmt, RTableRef, Ty},
+        resolved::{
+            FnKind, RExpr, RJoin, RJoinConstraint, RSelect, RSelectItem, RStmt, RTableRef, Ty,
+        },
         scope::{Scope, ScopeError},
     },
     catalog::catalog::Catalog,
@@ -94,7 +96,7 @@ impl<'c> Analyzer<'c> {
             .group_by
             .into_iter()
             .map(|e| self.analyze_expr(e, &scope))
-            .collect::<Result<Vec<_>>>();
+            .collect::<Result<Vec<_>>>()?;
 
         let cols = stmt
             .col
@@ -104,6 +106,25 @@ impl<'c> Analyzer<'c> {
             .into_iter()
             .flatten()
             .collect::<Vec<_>>();
+
+        if !group_by.is_empty() {
+            for item in &cols {
+                let flag = match &item.expr {
+                    RExpr::Literal(_, _) => true,
+                    RExpr::Function(c) => matches!(c.kind, FnKind::Aggregate),
+                    _ => false,
+                };
+
+                if !flag {
+                    let cov = group_by.iter().any(|g| {
+
+                    };
+                    if !cov {
+                        return Err(AnalyzerError);
+                    }
+                }
+            }
+        }
 
         todo!()
     }
@@ -155,10 +176,10 @@ impl<'c> Analyzer<'c> {
                 let label = item
                     .alias
                     .as_ref()
-                    .map(|a| a.clone())
+                    .map(|a| a.0.clone())
                     .unwrap_or_else(|| auto_label(&rexpr));
 
-                ok(vec![RSelectItem { expr: rexpr, label }])
+                Ok(vec![RSelectItem { expr: rexpr, label }])
             }
         }
     }
