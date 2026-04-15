@@ -19,6 +19,7 @@ pub enum AnalyzerError {
     UnknownType(String),
     TableNotFound(String),
     Scope(ScopeError),
+    NonAggregateInSelect(String),
 }
 
 impl fmt::Display for AnalyzerError {
@@ -27,6 +28,12 @@ impl fmt::Display for AnalyzerError {
             AnalyzerError::UnknownType(t) => write!(f, "Unkown Type: '{t}'"),
             AnalyzerError::TableNotFound(t) => write!(f, "table '{t}' not found"),
             AnalyzerError::Scope(e) => write!(f, "ScopeError: '{e}'"),
+            AnalyzerError::NonAggregateInSelect(label) => {
+                write!(
+                    f,
+                    "column '{label}' must appear in GROUP BY or be used inside an aggregate"
+                )
+            }
         }
     }
 }
@@ -44,6 +51,15 @@ fn dt_to_ty(dt: &DataType) -> Ty {
         DataType::Integer => Ty::Int,
         DataType::String => Ty::Text,
         DataType::Bool => Ty::Bool,
+    }
+}
+
+fn rexpr_matches(sel: &RExpr, key: &RExpr) -> bool {
+    match (sel, key) {
+        (RExpr::Column(a, _), RExpr::Column(b, _)) => {
+            a.table_name == b.table_name && a.col_idx == b.col_idx
+        }
+        _ => false,
     }
 }
 
@@ -116,15 +132,18 @@ impl<'c> Analyzer<'c> {
                 };
 
                 if !flag {
-                    let cov = group_by.iter().any(|g| {
-
-                    };
+                    let cov = group_by.iter().any(|g| rexpr_matches(&item.expr, g));
                     if !cov {
-                        return Err(AnalyzerError);
+                        return Err(AnalyzerError::NonAggregateInSelect(item.label.clone()));
                     }
                 }
             }
         }
+
+        let order_by = stmt
+            .order_by
+            .into_iter()
+            .map(|o| self.analyze_expr(o.expr, &scope));
 
         todo!()
     }
