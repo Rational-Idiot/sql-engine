@@ -3,7 +3,7 @@ use crate::{
     sql::ast::{BinaryOp, JoinKind, Literal, SetQuantifier, SortType, UnaryOp},
 };
 
-#[derive(PartialEq, Clone, Copy)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Ty {
     Int,
     Float,
@@ -20,6 +20,26 @@ impl Ty {
             (Ty::Int, Ty::Float) | (Ty::Float, Ty::Int) => Some(Ty::Float),
             _ if a == b => Some(*a),
             _ => None,
+        }
+    }
+}
+
+impl RExpr {
+    pub fn ty(&self) -> Ty {
+        match self {
+            RExpr::Literal(_, ty) => ty.clone(),
+            RExpr::Column(_, ty) => ty.clone(),
+            RExpr::BinaryOp { ty, .. } => ty.clone(),
+            RExpr::UnaryOp { ty, .. } => ty.clone(),
+            RExpr::Cast { data_type, .. } => data_type.clone(),
+            RExpr::Function(call) => call.return_ty.clone(),
+            RExpr::IsNull { .. } => Ty::Bool,
+            RExpr::Between { .. } => Ty::Bool,
+            RExpr::InList { .. } => Ty::Bool,
+            RExpr::InSubquery { .. } => Ty::Bool,
+            RExpr::Like { .. } => Ty::Bool,
+            RExpr::Exists { .. } => Ty::Bool,
+            RExpr::SubQuery(s) => s.col.first().map(|c| c.expr.ty()).unwrap_or(Ty::Null),
         }
     }
 }

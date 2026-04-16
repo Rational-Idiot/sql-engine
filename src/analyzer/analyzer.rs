@@ -1,5 +1,5 @@
 #![allow(dead_code)]
-use std::fmt;
+use std::{fmt, process::id};
 
 use crate::{
     analyzer::{
@@ -11,7 +11,8 @@ use crate::{
     },
     catalog::catalog::Catalog,
     sql::ast::{
-        DataType, Expr, JoinClause, JoinConstraint, Order, SelectItem, SelectStmt, Stmt, TableRef,
+        self, BinaryOp, DataType, Expr, JoinClause, JoinConstraint, Literal, Order, SelectItem,
+        SelectStmt, Stmt, TableRef,
     },
 };
 
@@ -21,6 +22,8 @@ pub enum AnalyzerError {
     TableNotFound(String),
     Scope(ScopeError),
     NonAggregateInSelect(String),
+    GlobNotAllowed,
+    CannotUnify(Ty, Ty),
 }
 
 impl fmt::Display for AnalyzerError {
@@ -28,6 +31,10 @@ impl fmt::Display for AnalyzerError {
         match self {
             AnalyzerError::UnknownType(t) => write!(f, "Unkown Type: '{t}'"),
             AnalyzerError::TableNotFound(t) => write!(f, "table '{t}' not found"),
+            AnalyzerError::CannotUnify(t1, t2) => {
+                write!(f, "Types '{t1}' and '{t2}' cannnot be unified")
+            }
+            AnalyzerError::GlobNotAllowed => write!(f, "Globbing (*) is not allowed in these Expr"),
             AnalyzerError::Scope(e) => write!(f, "ScopeError: '{e}'"),
             AnalyzerError::NonAggregateInSelect(label) => {
                 write!(
@@ -52,6 +59,21 @@ fn dt_to_ty(dt: &DataType) -> Ty {
         DataType::Integer => Ty::Int,
         DataType::String => Ty::Text,
         DataType::Bool => Ty::Bool,
+    }
+}
+
+fn lit_ty(lit: &Literal) -> Ty {
+    match lit {
+        Literal::Null => Ty::Null,
+        Literal::Number(s) => {
+            if s.contains('.') {
+                Ty::Float
+            } else {
+                Ty::Int
+            }
+        }
+        Literal::Bool(_) => Ty::Bool,
+        Literal::String(_) => Ty::Text,
     }
 }
 
@@ -237,7 +259,63 @@ impl<'c> Analyzer<'c> {
     }
 
     pub fn analyze_expr(&self, e: Expr, scope: &Scope<'_, '_>) -> Result<RExpr> {
-        todo!()
+        match e {
+            Expr::Literal(l) => {
+                let ty = lit_ty(&l);
+                Ok(RExpr::Literal(l, ty))
+            }
+
+            Expr::Identifier(ident) => {
+                let s = ident.0.to_lowercase();
+                let cr = if let Some(dot) = s.find('.') {
+                    scope
+                        .resolve_qualified(&s[..dot], &s[dot + 1..])
+                        .map_err(AnalyzerError::Scope)?
+                } else {
+                    scope.resolve_col(&s).map_err(AnalyzerError::Scope)?
+                };
+                let ty = dt_to_ty(&cr.data_type);
+                Ok(RExpr::Column(cr, ty))
+            }
+
+            Expr::Glob | Expr::QualifiedGlob(_) => Err(AnalyzerError::GlobNotAllowed),
+
+            Expr::BinaryOp { left, op, right } => {
+                let rleft = self.analyze_expr(*left, scope)?;
+                let rright = self.analyze_expr(*right, scope)?;
+
+                let ty = match op {
+                    BinaryOp::Eq
+                    | BinaryOp::Ne
+                    | BinaryOp::Gt
+                    | BinaryOp::Ge
+                    | BinaryOp::Lt
+                    | BinaryOp::Le => {
+                        Ty::unify(&rleft.ty(), &rright.ty())
+                            .ok_or_else(|| AnalyzerError::CannotUnify(rleft.ty(), rright.ty()))?;
+                        Ty::Bool
+                    }
+
+                    BinaryOp::And | BinaryOp::Or => Ty::Bool,
+
+                    BinaryOp::Add
+                    | BinaryOp::Sub
+                    | BinaryOp::Mul
+                    | BinaryOp::Div
+                    | BinaryOp::Percent => Ty::unify(&rleft.ty(), &rright.ty())
+                        .ok_or_else(|| AnalyzerError::CannotUnify(rleft.ty(), rright.ty()))?,
+                };
+
+                Ok(RExpr::BinaryOp {
+                    op,
+                    lhs: Box::new(rleft),
+                    rhs: Box::new(rright),
+                    ty,
+                })
+            }
+
+            _ => todo!(),
+        }
     }
 
     pub fn add_to_scope(

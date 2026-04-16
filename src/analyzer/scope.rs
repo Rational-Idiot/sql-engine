@@ -99,7 +99,7 @@ impl<'parent, 'catalog> Scope<'parent, 'catalog> {
         }
     }
 
-    fn resolve_col(&self, col_lower: &str) -> Result<ColRef> {
+    pub fn resolve_col(&self, col_lower: &str) -> Result<ColRef> {
         let mut found: Vec<ColRef> = Vec::new();
 
         for entry in &self.entries {
