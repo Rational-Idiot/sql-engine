@@ -124,7 +124,7 @@ pub enum RArgs {
 pub struct RSelect {
     pub col: Vec<RSelectItem>,
     pub quantifier: SetQuantifier,
-    pub from: Option<SetQuantifier>,
+    pub from: Option<RTableRef>,
     pub joins: Vec<RJoin>,
     pub where_clause: Option<RExpr>,
     pub group_by: Vec<RExpr>,

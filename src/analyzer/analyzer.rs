@@ -4,13 +4,14 @@ use std::fmt;
 use crate::{
     analyzer::{
         resolved::{
-            FnKind, RExpr, RJoin, RJoinConstraint, RSelect, RSelectItem, RStmt, RTableRef, Ty,
+            FnKind, RExpr, RJoin, RJoinConstraint, ROrder, RSelect, RSelectItem, RStmt, RTableRef,
+            Ty,
         },
         scope::{Scope, ScopeError},
     },
     catalog::catalog::Catalog,
     sql::ast::{
-        DataType, Expr, JoinClause, JoinConstraint, SelectItem, SelectStmt, Stmt, TableRef,
+        DataType, Expr, JoinClause, JoinConstraint, Order, SelectItem, SelectStmt, Stmt, TableRef,
     },
 };
 
@@ -114,7 +115,7 @@ impl<'c> Analyzer<'c> {
             .map(|e| self.analyze_expr(e, &scope))
             .collect::<Result<Vec<_>>>()?;
 
-        let cols = stmt
+        let col = stmt
             .col
             .iter()
             .map(|i| self.expand_select_item(i, &scope))
@@ -124,7 +125,7 @@ impl<'c> Analyzer<'c> {
             .collect::<Vec<_>>();
 
         if !group_by.is_empty() {
-            for item in &cols {
+            for item in &col {
                 let flag = match &item.expr {
                     RExpr::Literal(_, _) => true,
                     RExpr::Function(c) => matches!(c.kind, FnKind::Aggregate),
@@ -143,9 +144,24 @@ impl<'c> Analyzer<'c> {
         let order_by = stmt
             .order_by
             .into_iter()
-            .map(|o| self.analyze_expr(o.expr, &scope));
+            .map(|o| {
+                let expr = self.analyze_expr(o.expr, &scope)?;
+                Ok(ROrder { expr, dir: o.dir })
+            })
+            .collect::<Result<Vec<_>>>()?;
 
-        todo!()
+        Ok(RSelect {
+            quantifier: stmt.quantifier,
+            col,
+            from,
+            joins,
+            where_clause,
+            group_by,
+            having,
+            order_by,
+            limit: stmt.limit,
+            offset: stmt.offset,
+        })
     }
 
     pub fn expand_select_item(&self, item: &SelectItem, scope: &Scope) -> Result<Vec<RSelectItem>> {
