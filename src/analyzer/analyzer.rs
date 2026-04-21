@@ -1,17 +1,17 @@
 #![allow(dead_code)]
-use std::{fmt, process::id};
+use std::fmt;
 
 use crate::{
     analyzer::{
         resolved::{
-            FnKind, RCall, RExpr, RJoin, RJoinConstraint, ROrder, RSelect, RSelectItem, RStmt,
-            RTableRef, Ty,
+            FnKind, RArgs, RCall, RExpr, RJoin, RJoinConstraint, ROrder, RSelect, RSelectItem,
+            RStmt, RTableRef, Ty,
         },
         scope::{Scope, ScopeError},
     },
     catalog::catalog::Catalog,
     sql::ast::{
-        self, BinaryOp, Call, DataType, Expr, JoinClause, JoinConstraint, Literal, Order,
+        self, Args, BinaryOp, Call, DataType, Expr, JoinClause, JoinConstraint, Literal, Order,
         SelectItem, SelectStmt, Stmt, TableRef, UnaryOp,
     },
 };
@@ -19,17 +19,21 @@ use crate::{
 #[derive(Debug)]
 pub enum AnalyzerError {
     UnknownType(String),
+    UnknownFunction(String),
     TableNotFound(String),
     Scope(ScopeError),
     NonAggregateInSelect(String),
+    AggNotAllowed(String),
     GlobNotAllowed,
     CannotUnify(Ty, Ty),
+    StarArgNotAllowed(String),
 }
 
 impl fmt::Display for AnalyzerError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             AnalyzerError::UnknownType(t) => write!(f, "Unkown Type: '{t}'"),
+            AnalyzerError::UnknownFunction(t) => write!(f, "Unkown Type: '{t}'"),
             AnalyzerError::TableNotFound(t) => write!(f, "table '{t}' not found"),
             AnalyzerError::CannotUnify(t1, t2) => {
                 write!(f, "Types '{t1}' and '{t2}' cannnot be unified")
@@ -41,6 +45,12 @@ impl fmt::Display for AnalyzerError {
                     f,
                     "column '{label}' must appear in GROUP BY or be used inside an aggregate"
                 )
+            }
+            AnalyzerError::AggNotAllowed(a) => {
+                write!(f, "aggregate function '{a}' is not allowed here")
+            }
+            AnalyzerError::StarArgNotAllowed(n) => {
+                write!(f, "'{n}' does not accept a star (*) argument")
             }
         }
     }
@@ -440,8 +450,49 @@ impl<'c> Analyzer<'c> {
             }),
 
             Expr::Function(c) => {
-                let (kind, ..) = lookup_function(&c.name.0)?;
-                todo!()
+                let name_lower = c.name.0.to_lowercase();
+                let (kind, return_ty_fn) = lookup_function(&name_lower)
+                    .ok_or_else(|| AnalyzerError::UnknownFunction(name_lower.clone()))?;
+
+                if matches!(kind, FnKind::Aggregate) && !self.allow_agg {
+                    return Err(AnalyzerError::AggNotAllowed(name_lower));
+                }
+
+                let (rargs, arg_tys) = match c.args {
+                    Args::Star => {
+                        if name_lower != "count" {
+                            return Err(AnalyzerError::StarArgNotAllowed(name_lower));
+                        }
+                        (RArgs::Star, vec![])
+                    }
+
+                    Args::List(v) => {
+                        let res = v
+                            .into_iter()
+                            .map(|e| self.analyze_expr(e, scope))
+                            .collect::<Result<Vec<_>>>()?;
+
+                        let tys = res.iter().map(|e| e.ty()).collect::<Vec<_>>();
+                        (RArgs::List(res), tys)
+                    }
+                };
+
+                let return_ty = return_ty_fn(&arg_tys);
+
+                let filter = c
+                    .filter
+                    .map(|e| self.forbid_agg().analyze_expr(*e, scope))
+                    .transpose()?
+                    .map(Box::new);
+
+                Ok(RExpr::Function(RCall {
+                    name: name_lower,
+                    args: rargs,
+                    distinct: c.distinct,
+                    filter,
+                    return_ty,
+                    kind,
+                }))
             }
 
             _ => todo!(),
