@@ -5,7 +5,7 @@ use crate::{
     analyzer::{
         resolved::{
             FnKind, RArgs, RCall, RExpr, RInsert, RInsertSource, RJoin, RJoinConstraint, ROrder,
-            RSelect, RSelectItem, RStmt, RTableRef, Ty,
+            RSelect, RSelectItem, RStmt, RTableRef, RUpdate, Ty,
         },
         scope::{Scope, ScopeError},
     },
@@ -13,6 +13,7 @@ use crate::{
     sql::ast::{
         self, Args, BinaryOp, Call, DataType, Expr, InsertSource, InsertStmt, JoinClause,
         JoinConstraint, Literal, Order, SelectItem, SelectStmt, Stmt, TableRef, UnaryOp,
+        UpdateStmt,
     },
 };
 
@@ -29,6 +30,7 @@ pub enum AnalyzerError {
     CannotUnify(Ty, Ty),
     StarArgNotAllowed(String),
     ColumnMismatch { expected: usize, got: usize },
+    PrimaryKeyUpdate(String),
 }
 
 impl fmt::Display for AnalyzerError {
@@ -62,6 +64,9 @@ impl fmt::Display for AnalyzerError {
                     f,
                     "column count mismatch: expected {expected} value(s), got {got}"
                 )
+            }
+            AnalyzerError::PrimaryKeyUpdate(col) => {
+                write!(f, "cannot update primary key column '{col}'")
             }
         }
     }
@@ -165,6 +170,7 @@ impl<'c> Analyzer<'c> {
         match stmt {
             Stmt::Select(s) => Ok(RStmt::Select(self.analyze_select(s)?)),
             Stmt::Insert(s) => Ok(RStmt::Insert(self.analyze_insert(s)?)),
+            Stmt::Update(s) => Ok(RStmt::Update(self.analyze_update(s)?)),
             _ => todo!(),
         }
     }
@@ -379,6 +385,57 @@ impl<'c> Analyzer<'c> {
             table: name_lower,
             col_idx: coli,
             source,
+        })
+    }
+
+    pub fn analyze_update(&self, s: UpdateStmt) -> Result<RUpdate> {
+        let mut scope = Scope::new();
+        let where_clause = s
+            .where_clause
+            .map(|e| self.analyze_expr(e, &scope))
+            .transpose()?;
+
+        let rtable = self.add_to_scope(s.table, &mut scope)?;
+        let name_lwoer = match &rtable {
+            RTableRef::Named { table_name, .. } => table_name.clone(),
+            RTableRef::Subquery { .. } => {
+                return Err(AnalyzerError::TableNotFound(
+                    "(subquery is not a valid UPDATE target)".into(),
+                ));
+            }
+        };
+
+        let table = self
+            .catalog
+            .table(&name_lwoer)
+            .ok_or_else(|| AnalyzerError::TableNotFound(name_lwoer.clone()))?;
+
+        let assign =
+            s.assign
+                .into_iter()
+                .map(|a| {
+                    let col_lower = a.column.0.to_lowercase();
+                    let col = table.find_column(&col_lower).ok_or_else(|| {
+                        AnalyzerError::ColumnNotFound {
+                            table: name_lwoer.clone(),
+                            col: col_lower.clone(),
+                        }
+                    })?;
+
+                    if col.primary_key {
+                        return Err(AnalyzerError::PrimaryKeyUpdate(col_lower));
+                    }
+
+                    let rexpr = self.analyze_expr(a.value, &scope)?;
+                    check_assignable(rexpr.ty(), &dt_to_ty(&col.data_type))?;
+                    Ok((col.id, rexpr))
+                })
+                .collect::<Result<Vec<_>>>()?;
+
+        Ok(RUpdate {
+            table: rtable,
+            assign,
+            where_clause,
         })
     }
 
