@@ -49,6 +49,25 @@ impl fmt::Display for AnalyzerError {
 impl std::error::Error for AnalyzerError {}
 type Result<T> = std::result::Result<T, AnalyzerError>;
 
+fn lookup_function(name: &str) -> Option<(FnKind, fn(&[Ty]) -> Ty)> {
+    match name {
+        "count" => Some((FnKind::Aggregate, |_| Ty::Int)),
+        "sum" => Some((FnKind::Aggregate, |a| {
+            a.first().cloned().unwrap_or(Ty::Null)
+        })),
+        "avg" => Some((FnKind::Aggregate, |_| Ty::Float)),
+        "min" | "max" => Some((FnKind::Aggregate, |a| {
+            a.first().cloned().unwrap_or(Ty::Null)
+        })),
+
+        "upper" | "lower" => Some((FnKind::Scalar, |_| Ty::Text)),
+        "length" => Some((FnKind::Scalar, |_| Ty::Int)),
+        "abs" => Some((FnKind::Scalar, |a| a.first().cloned().unwrap_or(Ty::Null))),
+
+        _ => None,
+    }
+}
+
 #[derive(Clone, Copy)]
 pub struct Analyzer<'c> {
     catalog: &'c Catalog,
