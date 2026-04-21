@@ -49,8 +49,10 @@ impl fmt::Display for AnalyzerError {
 impl std::error::Error for AnalyzerError {}
 type Result<T> = std::result::Result<T, AnalyzerError>;
 
+#[derive(Clone, Copy)]
 pub struct Analyzer<'c> {
     catalog: &'c Catalog,
+    allow_agg: bool,
 }
 
 fn dt_to_ty(dt: &DataType) -> Ty {
@@ -98,7 +100,17 @@ fn auto_label(e: &RExpr) -> String {
 
 impl<'c> Analyzer<'c> {
     pub fn new(catalog: &'c mut Catalog) -> Self {
-        Self { catalog }
+        Self {
+            catalog,
+            allow_agg: true,
+        }
+    }
+
+    fn forbid_agg(self) -> Self {
+        Self {
+            allow_agg: false,
+            ..self
+        }
     }
 
     pub fn analyze(&self, stmt: Stmt) -> Result<RStmt> {
@@ -110,15 +122,16 @@ impl<'c> Analyzer<'c> {
 
     pub fn analyze_select(&self, stmt: SelectStmt) -> Result<RSelect> {
         let mut scope = Scope::new();
+
         let from = match stmt.from {
             Some(tr) => Some(self.add_to_scope(tr, &mut scope)?),
             None => None,
         };
 
-        let where_clause = match stmt.where_clause {
-            Some(e) => Some(self.analyze_expr(e, &scope)?),
-            None => None,
-        };
+        let where_clause = stmt
+            .where_clause
+            .map(|e| self.forbid_agg().analyze_expr(e, &scope))
+            .transpose()?;
 
         let having = match stmt.having {
             Some(e) => Some(self.analyze_expr(e, &scope)?),
@@ -134,7 +147,7 @@ impl<'c> Analyzer<'c> {
         let group_by = stmt
             .group_by
             .into_iter()
-            .map(|e| self.analyze_expr(e, &scope))
+            .map(|e| self.forbid_agg().analyze_expr(e, &scope))
             .collect::<Result<Vec<_>>>()?;
 
         let col = stmt
@@ -407,15 +420,13 @@ impl<'c> Analyzer<'c> {
                 neg,
             }),
 
-            Expr::Function(c) => Ok(RExpr::Function(self.analyze_call(c, scope)?)),
+            Expr::Function(c) => {
+                let (kind, ..) = lookup_function(&c.name.0)?;
+                todo!()
+            }
 
             _ => todo!(),
         }
-    }
-
-    fn analyze_call(&self, c: Call, scope: &Scope<'_, '_>) -> Result<RCall> {
-        let name_lower = c.name.0.to_lowercase();
-        todo!()
     }
 
     pub fn add_to_scope(
