@@ -4,15 +4,15 @@ use std::{fmt, process::id};
 use crate::{
     analyzer::{
         resolved::{
-            FnKind, RExpr, RJoin, RJoinConstraint, ROrder, RSelect, RSelectItem, RStmt, RTableRef,
-            Ty,
+            FnKind, RCall, RExpr, RJoin, RJoinConstraint, ROrder, RSelect, RSelectItem, RStmt,
+            RTableRef, Ty,
         },
         scope::{Scope, ScopeError},
     },
     catalog::catalog::Catalog,
     sql::ast::{
-        self, BinaryOp, DataType, Expr, JoinClause, JoinConstraint, Literal, Order, SelectItem,
-        SelectStmt, Stmt, TableRef,
+        self, BinaryOp, Call, DataType, Expr, JoinClause, JoinConstraint, Literal, Order,
+        SelectItem, SelectStmt, Stmt, TableRef, UnaryOp,
     },
 };
 
@@ -314,8 +314,108 @@ impl<'c> Analyzer<'c> {
                 })
             }
 
+            Expr::UnaryOp { op, expr } => {
+                let rexpr = self.analyze_expr(*expr, scope)?;
+                let ty = match op {
+                    UnaryOp::Not => Ty::Bool,
+                    UnaryOp::Neg => rexpr.ty(),
+                };
+
+                Ok(RExpr::UnaryOp {
+                    op,
+                    expr: Box::new(rexpr),
+                    ty,
+                })
+            }
+
+            Expr::IsNull { expr, neg } => {
+                let rexpr = self.analyze_expr(*expr, scope)?;
+                Ok(RExpr::IsNull {
+                    expr: Box::new(rexpr),
+                    neg,
+                })
+            }
+
+            Expr::Between {
+                expr,
+                negated,
+                low,
+                high,
+            } => {
+                let rexpr = self.analyze_expr(*expr, scope)?;
+                let rlow = self.analyze_expr(*low, scope)?;
+                let rhigh = self.analyze_expr(*high, scope)?;
+
+                Ty::unify(&rexpr.ty(), &rlow.ty())
+                    .ok_or_else(|| AnalyzerError::CannotUnify(rexpr.ty(), rlow.ty()))?;
+                Ty::unify(&rexpr.ty(), &rhigh.ty())
+                    .ok_or_else(|| AnalyzerError::CannotUnify(rexpr.ty(), rhigh.ty()))?;
+                Ok(RExpr::Between {
+                    expr: Box::new(rexpr),
+                    negated,
+                    low: Box::new(rlow),
+                    high: Box::new(rhigh),
+                })
+            }
+
+            Expr::InList { expr, list, neg } => {
+                let rexpr = self.analyze_expr(*expr, scope)?;
+                let rlist = list
+                    .into_iter()
+                    .map(|e| self.analyze_expr(e, scope))
+                    .collect::<Result<Vec<_>>>()?;
+
+                Ok(RExpr::InList {
+                    expr: Box::new(rexpr),
+                    list: rlist,
+                    neg,
+                })
+            }
+
+            Expr::InSubquery { expr, query, neg } => {
+                let rexpr = self.analyze_expr(*expr, scope)?;
+                let rq = self.analyze_select(*query)?;
+
+                Ok(RExpr::InSubquery {
+                    expr: Box::new(rexpr),
+                    query: Box::new(rq),
+                    neg,
+                })
+            }
+
+            Expr::Like {
+                expr,
+                pattern,
+                neg,
+                insensitive,
+            } => {
+                let rexpr = self.analyze_expr(*expr, scope)?;
+                let rpat = self.analyze_expr(*pattern, scope)?;
+
+                Ok(RExpr::Like {
+                    expr: Box::new(rexpr),
+                    pattern: Box::new(rpat),
+                    neg,
+                    insensitive,
+                })
+            }
+
+            Expr::SubQuery(q) => Ok(RExpr::SubQuery(Box::new(self.analyze_select(*q)?))),
+
+            Expr::Exists { query, neg } => Ok(RExpr::Exists {
+                query: Box::new(self.analyze_select(*query)?),
+                neg,
+            }),
+
+            Expr::Function(c) => Ok(RExpr::Function(self.analyze_call(c, scope)?)),
+
             _ => todo!(),
         }
+    }
+
+    fn analyze_call(&self, c: Call, scope: &Scope<'_, '_>) -> Result<RCall> {
+        let name_lower = c.name.0.to_lowercase();
+        todo!()
     }
 
     pub fn add_to_scope(
