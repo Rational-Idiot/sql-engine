@@ -4,8 +4,8 @@ use std::fmt;
 use crate::{
     analyzer::{
         resolved::{
-            FnKind, RArgs, RCall, RExpr, RInsert, RJoin, RJoinConstraint, ROrder, RSelect,
-            RSelectItem, RStmt, RTableRef, Ty,
+            FnKind, RArgs, RCall, RExpr, RInsert, RInsertSource, RJoin, RJoinConstraint, ROrder,
+            RSelect, RSelectItem, RStmt, RTableRef, Ty,
         },
         scope::{Scope, ScopeError},
     },
@@ -93,6 +93,14 @@ fn lookup_function(name: &str) -> Option<(FnKind, fn(&[Ty]) -> Ty)> {
 pub struct Analyzer<'c> {
     catalog: &'c Catalog,
     allow_agg: bool,
+}
+
+fn check_assignable(got: Ty, expected: &Ty) -> Result<()> {
+    if matches!(got, Ty::Null) {
+        return Ok(());
+    }
+    Ty::unify(&got, expected).ok_or_else(|| AnalyzerError::CannotUnify(got, expected.clone()))?;
+    Ok(())
 }
 
 fn dt_to_ty(dt: &DataType) -> Ty {
@@ -337,8 +345,41 @@ impl<'c> Analyzer<'c> {
         };
 
         let es = Scope::new();
+        let source = match s.source {
+            InsertSource::Values(vr) => {
+                let res = vr
+                    .into_iter()
+                    .map(|r| {
+                        if r.len() != coli.len() {
+                            return Err(AnalyzerError::ColumnMismatch {
+                                expected: coli.len(),
+                                got: r.len(),
+                            });
+                        }
 
-        todo!()
+                        r.into_iter()
+                            .zip(coli.iter())
+                            .map(|(e, &i)| {
+                                let rexpr = self.analyze_expr(e, &es)?;
+                                let ex = dt_to_ty(&table.cols[i].data_type);
+                                check_assignable(rexpr.ty(), &ex)?;
+                                Ok(rexpr)
+                            })
+                            .collect::<Result<Vec<_>>>()
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+
+                RInsertSource::Values(res)
+            }
+
+            InsertSource::Select(s) => RInsertSource::Select(Box::new(self.analyze_select(*s)?)),
+        };
+
+        Ok(RInsert {
+            table: name_lower,
+            col_idx: coli,
+            source,
+        })
     }
 
     pub fn analyze_expr(&self, e: Expr, scope: &Scope<'_, '_>) -> Result<RExpr> {
