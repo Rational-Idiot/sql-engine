@@ -184,27 +184,27 @@ impl<'c> Analyzer<'c> {
             None => None,
         };
 
-        let where_clause = stmt
-            .where_clause
-            .map(|e| self.forbid_agg().analyze_expr(e, &scope))
-            .transpose()?;
-
-        let having = match stmt.having {
-            Some(e) => Some(self.analyze_expr(e, &scope)?),
-            None => None,
-        };
-
         let joins = stmt
             .joins
             .into_iter()
             .map(|j| self.analyze_join(j, &mut scope))
             .collect::<Result<Vec<_>>>()?;
 
+        let where_clause = stmt
+            .where_clause
+            .map(|e| self.forbid_agg().analyze_expr(e, &scope))
+            .transpose()?;
+
         let group_by = stmt
             .group_by
             .into_iter()
             .map(|e| self.forbid_agg().analyze_expr(e, &scope))
             .collect::<Result<Vec<_>>>()?;
+
+        let having = match stmt.having {
+            Some(e) => Some(self.analyze_expr(e, &scope)?),
+            None => None,
+        };
 
         let col = stmt
             .col
@@ -391,11 +391,6 @@ impl<'c> Analyzer<'c> {
 
     pub fn analyze_update(&self, s: UpdateStmt) -> Result<RUpdate> {
         let mut scope = Scope::new();
-        let where_clause = s
-            .where_clause
-            .map(|e| self.analyze_expr(e, &scope))
-            .transpose()?;
-
         let rtable = self.add_to_scope(s.table, &mut scope)?;
         let name_lwoer = match &rtable {
             RTableRef::Named { table_name, .. } => table_name.clone(),
@@ -432,6 +427,11 @@ impl<'c> Analyzer<'c> {
                     Ok((col.id, rexpr))
                 })
                 .collect::<Result<Vec<_>>>()?;
+
+        let where_clause = s
+            .where_clause
+            .map(|e| self.analyze_expr(e, &scope))
+            .transpose()?;
 
         Ok(RUpdate {
             table: rtable,
