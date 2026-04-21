@@ -495,7 +495,14 @@ impl<'c> Analyzer<'c> {
                 }))
             }
 
-            _ => todo!(),
+            Expr::Cast { expr, data_type } => {
+                let rexpr = self.analyze_expr(*expr, scope)?;
+                let ty = dt_to_ty(&data_type);
+                Ok(RExpr::Cast {
+                    expr: Box::new(rexpr),
+                    data_type: ty,
+                })
+            }
         }
     }
 
