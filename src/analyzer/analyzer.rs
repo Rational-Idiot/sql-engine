@@ -171,7 +171,8 @@ impl<'c> Analyzer<'c> {
             Stmt::Select(s) => Ok(RStmt::Select(self.analyze_select(s)?)),
             Stmt::Insert(s) => Ok(RStmt::Insert(self.analyze_insert(s)?)),
             Stmt::Update(s) => Ok(RStmt::Update(self.analyze_update(s)?)),
-            _ => todo!(),
+            Stmt::Delete(s) => Ok(RStmt::Delete(self.analyze_delete(s)?)),
+            _ => unreachable!(),
         }
     }
 
