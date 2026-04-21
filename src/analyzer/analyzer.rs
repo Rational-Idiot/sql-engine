@@ -4,15 +4,15 @@ use std::fmt;
 use crate::{
     analyzer::{
         resolved::{
-            FnKind, RArgs, RCall, RExpr, RJoin, RJoinConstraint, ROrder, RSelect, RSelectItem,
-            RStmt, RTableRef, Ty,
+            FnKind, RArgs, RCall, RExpr, RInsert, RJoin, RJoinConstraint, ROrder, RSelect,
+            RSelectItem, RStmt, RTableRef, Ty,
         },
         scope::{Scope, ScopeError},
     },
     catalog::catalog::Catalog,
     sql::ast::{
-        self, Args, BinaryOp, Call, DataType, Expr, JoinClause, JoinConstraint, Literal, Order,
-        SelectItem, SelectStmt, Stmt, TableRef, UnaryOp,
+        self, Args, BinaryOp, Call, DataType, Expr, InsertSource, InsertStmt, JoinClause,
+        JoinConstraint, Literal, Order, SelectItem, SelectStmt, Stmt, TableRef, UnaryOp,
     },
 };
 
@@ -21,12 +21,14 @@ pub enum AnalyzerError {
     UnknownType(String),
     UnknownFunction(String),
     TableNotFound(String),
+    ColumnNotFound { table: String, col: String },
     Scope(ScopeError),
     NonAggregateInSelect(String),
     AggNotAllowed(String),
     GlobNotAllowed,
     CannotUnify(Ty, Ty),
     StarArgNotAllowed(String),
+    ColumnMismatch { expected: usize, got: usize },
 }
 
 impl fmt::Display for AnalyzerError {
@@ -35,6 +37,9 @@ impl fmt::Display for AnalyzerError {
             AnalyzerError::UnknownType(t) => write!(f, "Unkown Type: '{t}'"),
             AnalyzerError::UnknownFunction(t) => write!(f, "Unkown Type: '{t}'"),
             AnalyzerError::TableNotFound(t) => write!(f, "table '{t}' not found"),
+            AnalyzerError::ColumnNotFound { table: t, col: c } => {
+                write!(f, "Column '{c}' not fouond in table '{t}'")
+            }
             AnalyzerError::CannotUnify(t1, t2) => {
                 write!(f, "Types '{t1}' and '{t2}' cannnot be unified")
             }
@@ -51,6 +56,12 @@ impl fmt::Display for AnalyzerError {
             }
             AnalyzerError::StarArgNotAllowed(n) => {
                 write!(f, "'{n}' does not accept a star (*) argument")
+            }
+            AnalyzerError::ColumnMismatch { expected, got } => {
+                write!(
+                    f,
+                    "column count mismatch: expected {expected} value(s), got {got}"
+                )
             }
         }
     }
@@ -145,6 +156,7 @@ impl<'c> Analyzer<'c> {
     pub fn analyze(&self, stmt: Stmt) -> Result<RStmt> {
         match stmt {
             Stmt::Select(s) => Ok(RStmt::Select(self.analyze_select(s)?)),
+            Stmt::Insert(s) => Ok(RStmt::Insert(self.analyze_insert(s)?)),
             _ => todo!(),
         }
     }
@@ -298,6 +310,35 @@ impl<'c> Analyzer<'c> {
             table,
             constraint,
         })
+    }
+
+    pub fn analyze_insert(&self, s: InsertStmt) -> Result<RInsert> {
+        let name_lower = s.table.0.to_lowercase();
+        let table = self
+            .catalog
+            .table(&name_lower)
+            .ok_or_else(|| AnalyzerError::TableNotFound(s.table.0))?;
+
+        let coli = if s.columns.is_empty() {
+            table.cols.iter().map(|c| c.id).collect()
+        } else {
+            s.columns
+                .iter()
+                .map(|i| {
+                    let lower = i.0.to_lowercase();
+                    table.find_column(&lower).map(|c| c.id).ok_or_else(|| {
+                        AnalyzerError::ColumnNotFound {
+                            table: name_lower.clone(),
+                            col: lower,
+                        }
+                    })
+                })
+                .collect::<Result<Vec<_>>>()?
+        };
+
+        let es = Scope::new();
+
+        todo!()
     }
 
     pub fn analyze_expr(&self, e: Expr, scope: &Scope<'_, '_>) -> Result<RExpr> {
