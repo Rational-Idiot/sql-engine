@@ -4,16 +4,16 @@ use std::fmt;
 use crate::{
     analyzer::{
         resolved::{
-            FnKind, RArgs, RCall, RExpr, RInsert, RInsertSource, RJoin, RJoinConstraint, ROrder,
-            RSelect, RSelectItem, RStmt, RTableRef, RUpdate, Ty,
+            FnKind, RArgs, RCall, RDelete, RExpr, RInsert, RInsertSource, RJoin, RJoinConstraint,
+            ROrder, RSelect, RSelectItem, RStmt, RTableRef, RUpdate, Ty,
         },
         scope::{Scope, ScopeError},
     },
     catalog::catalog::Catalog,
     sql::ast::{
-        self, Args, BinaryOp, Call, DataType, Expr, InsertSource, InsertStmt, JoinClause,
-        JoinConstraint, Literal, Order, SelectItem, SelectStmt, Stmt, TableRef, UnaryOp,
-        UpdateStmt,
+        self, Args, BinaryOp, Call, DataType, DeleteStmt, Expr, InsertSource, InsertStmt,
+        JoinClause, JoinConstraint, Literal, Order, SelectItem, SelectStmt, Stmt, TableRef,
+        UnaryOp, UpdateStmt,
     },
 };
 
@@ -435,6 +435,21 @@ impl<'c> Analyzer<'c> {
         Ok(RUpdate {
             table: rtable,
             assign,
+            where_clause,
+        })
+    }
+
+    pub fn analyze_delete(&self, stmt: DeleteStmt) -> Result<RDelete> {
+        let mut scope = Scope::new();
+        let rtable = self.add_to_scope(stmt.table, &mut scope)?;
+
+        let where_clause = stmt
+            .where_clause
+            .map(|e| self.analyze_expr(e, &scope))
+            .transpose()?;
+
+        Ok(RDelete {
+            table: rtable,
             where_clause,
         })
     }
