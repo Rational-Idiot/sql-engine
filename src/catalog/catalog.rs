@@ -64,7 +64,7 @@ impl Table {
 
 #[derive(Debug)]
 pub struct Catalog {
-    tables: HashMap<String, Table>, // The key is name_lower
+    pub tables: HashMap<String, Table>, // The key is name_lower
 }
 
 impl Catalog {

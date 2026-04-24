@@ -698,3 +698,359 @@ impl<'c> Analyzer<'c> {
         }
     }
 }
+
+// ThankGPT
+#[cfg(test)]
+mod test {
+    use std::collections::HashMap;
+
+    use crate::{
+        analyzer::{
+            analyzer::Analyzer,
+            resolved::{FnKind, RExpr, RInsertSource, RStmt, RTableRef, Ty},
+        },
+        catalog::{catalog::Catalog, Column, Table},
+        sql::{ast::*, lex::*, parser::*},
+    };
+
+    fn mock_catalog() -> Catalog {
+        use std::collections::HashMap;
+
+        let users = Table {
+            name: "users".into(),
+            name_lower: "users".into(),
+            cols: vec![
+                Column {
+                    id: 0,
+                    name: "id".into(),
+                    name_lower: "id".into(),
+                    data_type: DataType::Integer,
+                    nullable: false,
+                    primary_key: true,
+                    unique: true,
+                },
+                Column {
+                    id: 1,
+                    name: "age".into(),
+                    name_lower: "age".into(),
+                    data_type: DataType::Integer,
+                    nullable: false,
+                    primary_key: false,
+                    unique: false,
+                },
+                Column {
+                    id: 2,
+                    name: "score".into(),
+                    name_lower: "score".into(),
+                    data_type: DataType::Integer,
+                    nullable: false,
+                    primary_key: false,
+                    unique: false,
+                },
+                Column {
+                    id: 3,
+                    name: "name".into(),
+                    name_lower: "name".into(),
+                    data_type: DataType::String,
+                    nullable: false,
+                    primary_key: false,
+                    unique: false,
+                },
+                Column {
+                    id: 4,
+                    name: "active".into(),
+                    name_lower: "active".into(),
+                    data_type: DataType::Bool,
+                    nullable: false,
+                    primary_key: false,
+                    unique: false,
+                },
+                Column {
+                    id: 5,
+                    name: "deleted".into(),
+                    name_lower: "deleted".into(),
+                    data_type: DataType::Bool,
+                    nullable: false,
+                    primary_key: false,
+                    unique: false,
+                },
+                Column {
+                    id: 6,
+                    name: "banned".into(),
+                    name_lower: "banned".into(),
+                    data_type: DataType::Integer,
+                    nullable: false,
+                    primary_key: false,
+                    unique: false,
+                },
+            ],
+        };
+
+        let orders = Table {
+            name: "orders".into(),
+            name_lower: "orders".into(),
+            cols: vec![
+                Column {
+                    id: 0,
+                    name: "id".into(),
+                    name_lower: "id".into(),
+                    data_type: DataType::Integer,
+                    nullable: false,
+                    primary_key: true,
+                    unique: true,
+                },
+                Column {
+                    id: 1,
+                    name: "user_id".into(),
+                    name_lower: "user_id".into(),
+                    data_type: DataType::Integer,
+                    nullable: false,
+                    primary_key: false,
+                    unique: false,
+                },
+                Column {
+                    id: 2,
+                    name: "amount".into(),
+                    name_lower: "amount".into(),
+                    data_type: DataType::Float,
+                    nullable: false,
+                    primary_key: false,
+                    unique: false,
+                },
+            ],
+        };
+
+        let mut tables = HashMap::new();
+        tables.insert("users".into(), users);
+        tables.insert("orders".into(), orders);
+
+        Catalog { tables }
+    }
+
+    fn parse(sql: &str) -> Stmt {
+        let mut lexer = Lex::new();
+        lexer.input = sql.chars().collect();
+
+        let tokens: Vec<Token> = lexer
+            .map(|t| t.unwrap())
+            .take_while(|t| *t != Token::EOF)
+            .chain(std::iter::once(Token::EOF))
+            .collect();
+
+        let mut parser = Parser::new(tokens);
+        parser.parse().unwrap()
+    }
+
+    #[test]
+    fn test_analyzer_select_complex() {
+        let stmt = parse(
+            "SELECT u.id, COUNT(*) AS cnt, SUM(o.amount) \
+             FROM users u \
+             INNER JOIN orders o ON u.id = o.user_id \
+             WHERE u.age > 18 AND u.name LIKE 'A%' \
+             GROUP BY u.id \
+             HAVING SUM(o.amount) > 100.0 \
+             ORDER BY u.id DESC",
+        );
+
+        println!("{:#?}", stmt);
+        let mut catalog = mock_catalog();
+        let analyzer = Analyzer::new(&mut catalog);
+        let analyzed = analyzer.analyze(stmt).unwrap();
+
+        match analyzed {
+            RStmt::Select(sel) => {
+                assert_eq!(sel.col.len(), 3);
+                assert_eq!(sel.joins.len(), 1);
+                assert_eq!(sel.group_by.len(), 1);
+                assert!(sel.having.is_some());
+                assert_eq!(sel.order_by.len(), 1);
+
+                match &sel.col[0].expr {
+                    RExpr::Column(cr, Ty::Int) => {
+                        assert_eq!(cr.table_alias, "u");
+                        assert_eq!(cr.col_name, "id");
+                    }
+                    _ => panic!("Expected resolved u.id"),
+                }
+
+                match &sel.col[1].expr {
+                    RExpr::Function(call) => {
+                        assert_eq!(call.name, "count");
+                        assert!(matches!(call.kind, FnKind::Aggregate));
+                        assert_eq!(call.return_ty, Ty::Int);
+                    }
+                    _ => panic!("Expected COUNT(*)"),
+                }
+
+                match &sel.col[2].expr {
+                    RExpr::Function(call) => {
+                        assert_eq!(call.name, "sum");
+                        assert!(matches!(call.kind, FnKind::Aggregate));
+                        assert_eq!(call.return_ty, Ty::Float);
+                    }
+                    _ => panic!("Expected SUM(o.amount)"),
+                }
+            }
+            _ => panic!("Expected RStmt::Select"),
+        }
+    }
+
+    #[test]
+    fn test_analyzer_insert_complex() {
+        let stmt = parse(
+            "INSERT INTO users (id, age, score, name, active) VALUES \
+             (1, 20, 10 + 5 * 2, 'Alice', TRUE), \
+             (2, 25, abs(-30), 'Bob', FALSE)",
+        );
+
+        let mut catalog = mock_catalog();
+        let analyzer = Analyzer::new(&mut catalog);
+        let analyzed = analyzer.analyze(stmt).unwrap();
+
+        match analyzed {
+            RStmt::Insert(ins) => {
+                assert_eq!(ins.table, "users");
+                assert_eq!(ins.col_idx.len(), 5);
+
+                match ins.source {
+                    RInsertSource::Values(rows) => {
+                        assert_eq!(rows.len(), 2);
+                        assert_eq!(rows[0].len(), 5);
+                        assert_eq!(rows[1].len(), 5);
+
+                        match &rows[0][2] {
+                            RExpr::BinaryOp {
+                                op: BinaryOp::Add,
+                                ty,
+                                ..
+                            } => {
+                                assert_eq!(*ty, Ty::Int);
+                            }
+                            _ => panic!("Expected arithmetic expression for score"),
+                        }
+
+                        match &rows[1][2] {
+                            RExpr::Function(call) => {
+                                assert_eq!(call.name, "abs");
+                                assert_eq!(call.return_ty, Ty::Int);
+                            }
+                            _ => panic!("Expected abs(-30)"),
+                        }
+
+                        assert_eq!(rows[0][3].ty(), Ty::Text);
+                        assert_eq!(rows[0][4].ty(), Ty::Bool);
+                    }
+                    _ => panic!("Expected RInsertSource::Values"),
+                }
+            }
+            _ => panic!("Expected RStmt::Insert"),
+        }
+    }
+
+    #[test]
+    fn test_analyzer_update_complex() {
+        let stmt = parse(
+            "UPDATE users u \
+             SET score = score * 2 + 5, \
+                 active = NOT (age > 18 AND banned = 0), \
+                 name = lower(name) \
+             WHERE (score BETWEEN 10 AND 20 OR id IN (1, 2, 3)) \
+             AND NOT deleted",
+        );
+
+        let mut catalog = mock_catalog();
+        let analyzer = Analyzer::new(&mut catalog);
+        let analyzed = analyzer.analyze(stmt).unwrap();
+
+        match analyzed {
+            RStmt::Update(upd) => {
+                assert_eq!(upd.assign.len(), 3);
+                assert!(upd.where_clause.is_some());
+
+                match &upd.table {
+                    RTableRef::Named { table_name, alias } => {
+                        assert_eq!(table_name, "users");
+                        assert_eq!(alias.as_deref(), Some("u"));
+                    }
+                    _ => panic!("Expected named update target"),
+                }
+
+                match &upd.assign[0].1 {
+                    RExpr::BinaryOp { ty, .. } => assert_eq!(*ty, Ty::Int),
+                    _ => panic!("Expected arithmetic score assignment"),
+                }
+
+                match &upd.assign[1].1 {
+                    RExpr::UnaryOp { ty, .. } => assert_eq!(*ty, Ty::Bool),
+                    _ => panic!("Expected boolean active assignment"),
+                }
+
+                match &upd.assign[2].1 {
+                    RExpr::Function(call) => {
+                        assert_eq!(call.name, "lower");
+                        assert_eq!(call.return_ty, Ty::Text);
+                    }
+                    _ => panic!("Expected lower(name)"),
+                }
+
+                match upd.where_clause.unwrap() {
+                    RExpr::BinaryOp {
+                        op: BinaryOp::And, ..
+                    } => {}
+                    _ => panic!("Expected top-level AND in WHERE"),
+                }
+            }
+            _ => panic!("Expected RStmt::Update"),
+        }
+    }
+
+    #[test]
+    fn test_analyzer_delete_complex() {
+        let stmt = parse(
+            "DELETE FROM users u \
+             WHERE (u.age < 18 AND NOT u.active) \
+             OR u.name LIKE 'A%'",
+        );
+
+        let mut catalog = mock_catalog();
+        let analyzer = Analyzer::new(&mut catalog);
+        let analyzed = analyzer.analyze(stmt).unwrap();
+
+        match analyzed {
+            RStmt::Delete(del) => {
+                match del.table {
+                    RTableRef::Named { table_name, alias } => {
+                        assert_eq!(table_name, "users");
+                        assert_eq!(alias.as_deref(), Some("u"));
+                    }
+                    _ => panic!("Expected named delete target"),
+                }
+
+                let where_expr = del.where_clause.expect("Expected WHERE");
+                match where_expr {
+                    RExpr::BinaryOp {
+                        op: BinaryOp::Or,
+                        lhs,
+                        rhs,
+                        ..
+                    } => {
+                        match *lhs {
+                            RExpr::BinaryOp {
+                                op: BinaryOp::And, ..
+                            } => {}
+                            _ => panic!("Expected AND on the left side"),
+                        }
+
+                        match *rhs {
+                            RExpr::Like { .. } => {}
+                            _ => panic!("Expected LIKE on the right side"),
+                        }
+                    }
+                    _ => panic!("Expected top-level OR in WHERE"),
+                }
+            }
+            _ => panic!("Expected RStmt::Delete"),
+        }
+    }
+}

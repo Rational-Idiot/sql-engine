@@ -945,6 +945,63 @@ mod tests {
     };
 
     #[test]
+    fn test_decimal_breaks_order_by() {
+        use crate::sql::lex::Lex;
+
+        let input = "SELECT 1 HAVING 1 > 100.0 ORDER BY 1";
+        let mut lexer = Lex::new();
+        lexer.input = input.chars().collect();
+
+        let tokens: Vec<_> = lexer.map(|t| t.unwrap()).collect();
+
+        println!("{:?}", tokens);
+
+        let mut parser = Parser::new(tokens);
+        let stmt = parser.parse();
+
+        println!("{:#?}", stmt);
+
+        // CRITICAL: ensure we consumed everything
+        assert_eq!(parser.peek(), &Token::EOF);
+    }
+
+    #[test]
+    fn test_parse_order_by_simple() {
+        use crate::sql::ast::*;
+        use crate::sql::lex::Lex;
+        use crate::sql::parser::Parser;
+
+        let mut lex = Lex::new();
+        lex.input = "SELECT u.id FROM users u ORDER BY u.id DESC;"
+            .chars()
+            .collect();
+
+        let tokens: Vec<_> = lex.map(|t| t.unwrap()).collect();
+        println!("{:?}", tokens); // keep this
+
+        let mut parser = Parser::new(tokens);
+        let stmt = parser.parse().unwrap();
+
+        match stmt {
+            Stmt::Select(s) => {
+                assert_eq!(s.order_by.len(), 1, "ORDER BY not parsed");
+
+                let order = &s.order_by[0];
+
+                match &order.expr {
+                    Expr::Identifier(id) => {
+                        assert_eq!(id.0, "u.id");
+                    }
+                    _ => panic!("Expected identifier in ORDER BY"),
+                }
+
+                assert_eq!(order.dir, SortType::Desc);
+            }
+            _ => panic!("Expected SELECT"),
+        }
+    }
+
+    #[test]
     fn parse_select_statement() {
         let mut lexer = Lex::new();
         lexer.input = "SELECT * FROM gay".chars().collect();

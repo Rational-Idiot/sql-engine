@@ -304,7 +304,14 @@ impl Lex {
                 }
 
                 c if c.is_ascii_digit() => {
-                    let num = self.eat_while(|c| c.is_ascii_digit());
+                    let mut num = self.eat_while(|c| c.is_ascii_digit());
+
+                    if self.peek() == Some('.') {
+                        self.advance();
+                        num.push('.');
+                        num.push_str(&self.eat_while(|c| c.is_ascii_digit()));
+                    }
+
                     return Ok(Token::Number(num));
                 }
 
@@ -333,7 +340,12 @@ impl Iterator for Lex {
     type Item = Result<Token, String>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        Some(self.next_token())
+        let tok = self.next_token();
+
+        match tok {
+            Ok(Token::EOF) => None,
+            _ => Some(tok),
+        }
     }
 }
 
@@ -484,7 +496,6 @@ mod tests {
                 Token::Id("name".to_string()),
                 Token::RParen,
                 Token::Semicolon,
-                Token::EOF,
             ]
         );
     }
