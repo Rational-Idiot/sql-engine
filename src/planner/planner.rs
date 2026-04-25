@@ -173,6 +173,7 @@ impl Planner {
 fn expr_has_agg(e: &RExpr) -> bool {
     match e {
         RExpr::Function(c) => matches!(c.kind, FnKind::Aggregate),
+
         RExpr::BinaryOp { lhs, rhs, .. } => expr_has_agg(lhs) || expr_has_agg(rhs),
         RExpr::UnaryOp { expr, .. } => expr_has_agg(expr),
         RExpr::IsNull { expr, .. } => expr_has_agg(expr),
@@ -182,10 +183,114 @@ fn expr_has_agg(e: &RExpr) -> bool {
             expr, low, high, ..
         } => expr_has_agg(expr) || expr_has_agg(low) || expr_has_agg(high),
         RExpr::InList { expr, list, .. } => expr_has_agg(expr) || list.iter().any(expr_has_agg),
+
         RExpr::Literal(..)
         | RExpr::Column(..)
         | RExpr::SubQuery(..)
         | RExpr::Exists { .. }
         | RExpr::InSubquery { .. } => false,
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::{
+        analyzer::analyzer::*,
+        test_utils::{mock_catalog, parse},
+    };
+    #[test]
+    fn test_planner_select_everything_pipeline() {
+        let stmt = parse(
+            "SELECT DISTINCT u.id, COUNT(*) AS cnt, SUM(o.amount) \
+         FROM users u \
+         INNER JOIN orders o ON u.id = o.user_id \
+         WHERE u.age > 18 AND u.name LIKE 'A%' \
+         GROUP BY u.id \
+         HAVING SUM(o.amount) > 100.0 \
+         ORDER BY u.id DESC \
+         LIMIT 10 OFFSET 2",
+        );
+
+        let mut catalog = mock_catalog();
+        let analyzer = Analyzer::new(&mut catalog);
+        let analyzed = analyzer.analyze(stmt).unwrap();
+
+        let planner = Planner::new();
+        let logical = planner.plan_logical(analyzed);
+
+        use LogicalPlan::*;
+
+        // Top-down assertions (DON'T try full ==, too brittle)
+        match logical {
+            Limit {
+                limit,
+                offset,
+                input,
+            } => {
+                assert_eq!(limit, Some(10));
+                assert_eq!(offset, Some(2));
+
+                match *input {
+                    Sort { keys, input } => {
+                        assert_eq!(keys.len(), 1);
+
+                        match *input {
+                            Distinct { input } => {
+                                match *input {
+                                    Project { cols, input } => {
+                                        assert_eq!(cols.len(), 3);
+
+                                        match *input {
+                                            Filter { input, .. } => {
+                                                // HAVING
+
+                                                match *input {
+                                                    Aggregate { keys, aggs, input } => {
+                                                        assert_eq!(keys.len(), 1);
+                                                        assert!(!aggs.is_empty());
+
+                                                        match *input {
+                                                            Filter { input, .. } => {
+                                                                // WHERE
+
+                                                                match *input {
+                                                                    Join {
+                                                                        left, right, ..
+                                                                    } => match (*left, *right) {
+                                                                        (
+                                                                            Scan { table: l },
+                                                                            Scan { table: r },
+                                                                        ) => {
+                                                                            assert_eq!(l, "users");
+                                                                            assert_eq!(r, "orders");
+                                                                        }
+                                                                        _ => panic!(
+                                                                            "Expected scans under join"
+                                                                        ),
+                                                                    },
+                                                                    _ => panic!("Expected Join"),
+                                                                }
+                                                            }
+                                                            _ => panic!("Expected WHERE Filter"),
+                                                        }
+                                                    }
+                                                    _ => panic!("Expected Aggregate"),
+                                                }
+                                            }
+                                            _ => panic!("Expected HAVING Filter"),
+                                        }
+                                    }
+                                    _ => panic!("Expected Project"),
+                                }
+                            }
+                            _ => panic!("Expected Distinct"),
+                        }
+                    }
+                    _ => panic!("Expected Sort"),
+                }
+            }
+            _ => panic!("Expected Limit at top"),
+        }
     }
 }
