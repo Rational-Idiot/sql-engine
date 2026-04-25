@@ -63,6 +63,7 @@ pub enum RStmt {
     Delete(RDelete),
 }
 
+#[derive(Clone)]
 pub enum RExpr {
     Literal(Literal, Ty),
     Column(ColRef, Ty),
@@ -122,6 +123,7 @@ pub enum RExpr {
     Function(RCall),
 }
 
+#[derive(Clone)]
 pub struct RCall {
     pub name: String,
     pub args: RArgs,
@@ -131,16 +133,19 @@ pub struct RCall {
     pub kind: FnKind,
 }
 
+#[derive(Clone)]
 pub enum FnKind {
     Aggregate, // COUNT, SUM, AVG, MIN, MAX
     Scalar,    // UPPER, LOWER, LENGTH, ABS
 }
 
+#[derive(Clone)]
 pub enum RArgs {
     Star, // COUNT(*)
     List(Vec<RExpr>),
 }
 
+#[derive(Clone)]
 pub struct RSelect {
     pub col: Vec<RSelectItem>,
     pub quantifier: SetQuantifier,
@@ -154,29 +159,34 @@ pub struct RSelect {
     pub offset: Option<u64>,
 }
 
+#[derive(Clone)]
 pub struct ROrder {
     pub expr: RExpr,
     pub dir: SortType,
     // nulls: NullOrdering,
 }
 
+#[derive(Clone)]
 pub struct RSelectItem {
     pub expr: RExpr,
     pub label: String, // AS alias, col name, synthesised "col_N"
 }
 
+#[derive(Clone)]
 pub struct RJoin {
     pub kind: JoinKind,
     pub table: RTableRef,
     pub constraint: RJoinConstraint,
 }
 
+#[derive(Clone)]
 pub enum RJoinConstraint {
     Natural,
     On(RExpr),
     Using(Vec<String>),
 }
 
+#[derive(Clone)]
 pub enum RTableRef {
     Named {
         // The real one from catalog

@@ -1,0 +1,191 @@
+#![allow(dead_code)]
+
+use super::logical::LogicalPlan::{self, *};
+use super::physical::{PhysicalPlan, lower};
+use crate::{
+    analyzer::resolved::{
+        FnKind, RDelete, RExpr, RInsert, RInsertSource, RSelect, RStmt, RTableRef, RUpdate,
+    },
+    sql::ast::SetQuantifier,
+};
+
+pub struct Planner;
+
+impl Planner {
+    pub fn new() -> Self {
+        Self
+    }
+
+    pub fn plan(&self, stmt: RStmt) -> PhysicalPlan {
+        lower(self.plan_logical(stmt))
+    }
+
+    fn plan_logical(&self, stmt: RStmt) -> LogicalPlan {
+        match stmt {
+            RStmt::Select(s) => self.plan_select(s),
+            RStmt::Insert(s) => self.plan_insert(s),
+            RStmt::Update(s) => self.plan_update(s),
+            RStmt::Delete(s) => self.plan_delete(s),
+        }
+    }
+
+    fn plan_select(&self, s: RSelect) -> LogicalPlan {
+        let mut plan = match s.from {
+            None => Values { rows: vec![vec![]] },
+            Some(tr) => self.plan_table_ref(tr),
+        };
+
+        for join in s.joins {
+            let right = self.plan_table_ref(join.table);
+            plan = Join {
+                kind: join.kind,
+                left: Box::new(plan),
+                right: Box::new(right),
+                constraint: join.constraint,
+            };
+        }
+
+        if let Some(pred) = s.where_clause {
+            plan = Filter {
+                predicate: pred,
+                input: Box::new(plan),
+            };
+        }
+
+        let has_agg = !s.group_by.is_empty() || s.col.iter().any(|c| expr_has_agg(&c.expr));
+
+        if has_agg {
+            let agg_items = s
+                .col
+                .iter()
+                .filter(|c| expr_has_agg(&c.expr))
+                .cloned()
+                .collect::<Vec<_>>();
+
+            plan = Aggregate {
+                keys: s.group_by,
+                aggs: agg_items,
+                input: Box::new(plan),
+            };
+        }
+
+        if let Some(pred) = s.having {
+            plan = Filter {
+                predicate: pred,
+                input: Box::new(plan),
+            };
+        }
+
+        plan = Project {
+            cols: s.col,
+            input: Box::new(plan),
+        };
+
+        if matches!(s.quantifier, SetQuantifier::Distinct) {
+            plan = Distinct {
+                input: Box::new(plan),
+            };
+        }
+
+        if !s.order_by.is_empty() {
+            plan = Sort {
+                keys: s.order_by,
+                input: Box::new(plan),
+            };
+        }
+
+        if s.limit.is_some() || s.offset.is_some() {
+            plan = Limit {
+                limit: s.limit,
+                offset: s.offset,
+                input: Box::new(plan),
+            };
+        }
+
+        plan
+    }
+
+    fn plan_table_ref(&self, tr: RTableRef) -> LogicalPlan {
+        match tr {
+            RTableRef::Named { table_name, .. } => Scan { table: table_name },
+            RTableRef::Subquery { query, .. } => self.plan_select(*query),
+        }
+    }
+
+    fn plan_insert(&self, s: RInsert) -> LogicalPlan {
+        let input = match s.source {
+            RInsertSource::Values(rows) => Values { rows },
+            RInsertSource::Select(query) => self.plan_select(*query),
+        };
+        Insert {
+            table: s.table,
+            col_idxs: s.col_idx,
+            input: Box::new(input),
+        }
+    }
+
+    fn plan_update(&self, s: RUpdate) -> LogicalPlan {
+        let table_name = match &s.table {
+            RTableRef::Named { table_name, .. } => table_name.clone(),
+            RTableRef::Subquery { .. } => unreachable!("analyzer rejects subquery UPDATE targets"),
+        };
+
+        let mut input = Scan {
+            table: table_name.clone(),
+        };
+        if let Some(pred) = s.where_clause {
+            input = Filter {
+                predicate: pred,
+                input: Box::new(input),
+            };
+        }
+
+        Update {
+            table: table_name,
+            assign: s.assign,
+            input: Box::new(input),
+        }
+    }
+
+    fn plan_delete(&self, s: RDelete) -> LogicalPlan {
+        let table_name = match &s.table {
+            RTableRef::Named { table_name, .. } => table_name.clone(),
+            RTableRef::Subquery { .. } => unreachable!("analyzer rejects subquery DELETE targets"),
+        };
+
+        let mut input = Scan {
+            table: table_name.clone(),
+        };
+        if let Some(pred) = s.where_clause {
+            input = Filter {
+                predicate: pred,
+                input: Box::new(input),
+            };
+        }
+
+        Delete {
+            table: table_name,
+            input: Box::new(input),
+        }
+    }
+}
+
+fn expr_has_agg(e: &RExpr) -> bool {
+    match e {
+        RExpr::Function(c) => matches!(c.kind, FnKind::Aggregate),
+        RExpr::BinaryOp { lhs, rhs, .. } => expr_has_agg(lhs) || expr_has_agg(rhs),
+        RExpr::UnaryOp { expr, .. } => expr_has_agg(expr),
+        RExpr::IsNull { expr, .. } => expr_has_agg(expr),
+        RExpr::Cast { expr, .. } => expr_has_agg(expr),
+        RExpr::Like { expr, pattern, .. } => expr_has_agg(expr) || expr_has_agg(pattern),
+        RExpr::Between {
+            expr, low, high, ..
+        } => expr_has_agg(expr) || expr_has_agg(low) || expr_has_agg(high),
+        RExpr::InList { expr, list, .. } => expr_has_agg(expr) || list.iter().any(expr_has_agg),
+        RExpr::Literal(..)
+        | RExpr::Column(..)
+        | RExpr::SubQuery(..)
+        | RExpr::Exists { .. }
+        | RExpr::InSubquery { .. } => false,
+    }
+}

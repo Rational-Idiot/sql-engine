@@ -7,9 +7,10 @@ A powerful sql engine that (hopefully) supports all common sql keywords - {The a
 - [x] Build the lexer
 - [x] Create an AST
 - [x] Make the Scope Resolver
-- [ ] Make a decorated AST
+- [x] Make a decorated AST
   - [x] Define the AST
-  - [ ] Fill the AST
+  - [x] Fill the AST
+- [ ] Make a COW B+ Implementation
 - [ ] Build the Actual Engine
 - [ ] Profit
 
