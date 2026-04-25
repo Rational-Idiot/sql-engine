@@ -293,4 +293,119 @@ mod test {
             _ => panic!("Expected Limit at top"),
         }
     }
+
+    #[test]
+    fn test_planner_write_pipeline() {
+        let mut catalog = mock_catalog();
+        let analyzer = Analyzer::new(&mut catalog);
+        let planner = Planner::new();
+
+        use LogicalPlan::*;
+
+        // ---------------- INSERT ----------------
+
+        let insert_stmt = parse(
+            "INSERT INTO users (id, age, score) \
+         SELECT u.id, u.age, COUNT(*) \
+         FROM users u \
+         INNER JOIN orders o ON u.id = o.user_id \
+         WHERE u.active = true \
+         GROUP BY u.id, u.age",
+        );
+
+        let analyzed_insert = analyzer.analyze(insert_stmt).unwrap();
+        let logical_insert = planner.plan_logical(analyzed_insert);
+
+        match logical_insert {
+            Insert {
+                table,
+                col_idxs,
+                input,
+            } => {
+                assert_eq!(table, "users");
+                assert_eq!(col_idxs.len(), 3);
+
+                match *input {
+                    Project { input, .. } => match *input {
+                        Aggregate { keys, input, .. } => {
+                            assert_eq!(keys.len(), 2);
+
+                            match *input {
+                                Filter { input, .. } => match *input {
+                                    Join { left, right, .. } => match (*left, *right) {
+                                        (Scan { table: l }, Scan { table: r }) => {
+                                            assert_eq!(l, "users");
+                                            assert_eq!(r, "orders");
+                                        }
+                                        _ => panic!("Expected scans"),
+                                    },
+                                    _ => panic!("Expected Join"),
+                                },
+                                _ => panic!("Expected WHERE"),
+                            }
+                        }
+                        _ => panic!("Expected Aggregate"),
+                    },
+                    _ => panic!("Expected Project"),
+                }
+            }
+            _ => panic!("Expected Insert"),
+        }
+
+        // ---------------- UPDATE ----------------
+
+        let update_stmt = parse(
+            "UPDATE users SET age = age + 1, score = score + 10 \
+         WHERE active = true AND deleted = false",
+        );
+
+        let analyzed_update = analyzer.analyze(update_stmt).unwrap();
+        let logical_update = planner.plan_logical(analyzed_update);
+
+        match logical_update {
+            Update {
+                table,
+                assign,
+                input,
+            } => {
+                assert_eq!(table, "users");
+                assert_eq!(assign.len(), 2);
+
+                match *input {
+                    Filter { input, .. } => match *input {
+                        Scan { table } => {
+                            assert_eq!(table, "users");
+                        }
+                        _ => panic!("Expected Scan"),
+                    },
+                    _ => panic!("Expected Filter"),
+                }
+            }
+            _ => panic!("Expected Update"),
+        }
+
+        // ---------------- DELETE ----------------
+
+        let delete_stmt = parse("DELETE FROM users WHERE age < 18 OR banned > 0");
+
+        let analyzed_delete = analyzer.analyze(delete_stmt).unwrap();
+        let logical_delete = planner.plan_logical(analyzed_delete);
+
+        match logical_delete {
+            Delete { table, input } => {
+                assert_eq!(table, "users");
+
+                match *input {
+                    Filter { input, .. } => match *input {
+                        Scan { table } => {
+                            assert_eq!(table, "users");
+                        }
+                        _ => panic!("Expected Scan"),
+                    },
+                    _ => panic!("Expected Filter"),
+                }
+            }
+            _ => panic!("Expected Delete"),
+        }
+    }
 }

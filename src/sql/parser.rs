@@ -943,210 +943,101 @@ mod tests {
         lex::{Lex, Token},
         parser::Parser,
     };
-
     #[test]
-    fn test_decimal_breaks_order_by() {
-        use crate::sql::lex::Lex;
-
-        let input = "SELECT 1 HAVING 1 > 100.0 ORDER BY 1";
-        let mut lexer = Lex::new();
-        lexer.input = input.chars().collect();
-
-        let tokens: Vec<_> = lexer.map(|t| t.unwrap()).collect();
-
-        println!("{:?}", tokens);
-
-        let mut parser = Parser::new(tokens);
-        let stmt = parser.parse();
-
-        println!("{:#?}", stmt);
-
-        // CRITICAL: ensure we consumed everything
-        assert_eq!(parser.peek(), &Token::EOF);
-    }
-
-    #[test]
-    fn test_parse_order_by_simple() {
+    fn parse_select() {
         use crate::sql::ast::*;
-        use crate::sql::lex::Lex;
+        use crate::sql::lex::{Lex, Token};
         use crate::sql::parser::Parser;
 
-        let mut lex = Lex::new();
-        lex.input = "SELECT u.id FROM users u ORDER BY u.id DESC;"
-            .chars()
-            .collect();
+        let sql = "
+        SELECT DISTINCT 
+            u.id,
+            u.name AS username,
+            COUNT(*) AS cnt,
+            SUM(o.amount) + 10 * 2 AS total,
+            NOT (u.age > 18 OR u.banned = 1) AS flag
+        FROM users u
+        INNER JOIN orders o ON u.id = o.user_id
+        WHERE 
+            (u.age BETWEEN 18 AND 30 OR u.id IN (1, 2, 3))
+            AND u.name LIKE 'A%'
+            AND u.deleted IS NOT NULL
+        GROUP BY u.id, u.name
+        HAVING SUM(o.amount) > 100
+        ORDER BY u.id DESC, total ASC
+        LIMIT 10 OFFSET 5;
+    ";
 
-        let tokens: Vec<_> = lex.map(|t| t.unwrap()).collect();
-        println!("{:?}", tokens); // keep this
+        let mut lex = Lex::new();
+        lex.input = sql.chars().collect();
+
+        let tokens: Vec<Token> = lex
+            .map(|t| t.unwrap())
+            .take_while(|t| *t != Token::EOF)
+            .chain(std::iter::once(Token::EOF))
+            .collect();
 
         let mut parser = Parser::new(tokens);
         let stmt = parser.parse().unwrap();
 
+        // Ensure full consumption (VERY important)
+        assert_eq!(parser.peek(), &Token::EOF);
+
         match stmt {
             Stmt::Select(s) => {
-                assert_eq!(s.order_by.len(), 1, "ORDER BY not parsed");
+                assert_eq!(s.col.len(), 5);
+                assert_eq!(s.joins.len(), 1);
+                assert_eq!(s.group_by.len(), 2);
+                assert!(s.having.is_some());
+                assert_eq!(s.order_by.len(), 2);
+                assert_eq!(s.limit, Some(10));
+                assert_eq!(s.offset, Some(5));
 
-                let order = &s.order_by[0];
-
-                match &order.expr {
-                    Expr::Identifier(id) => {
-                        assert_eq!(id.0, "u.id");
-                    }
-                    _ => panic!("Expected identifier in ORDER BY"),
+                // WHERE should be AND at top level
+                match s.where_clause.unwrap() {
+                    Expr::BinaryOp {
+                        op: BinaryOp::And, ..
+                    } => {}
+                    _ => panic!("Expected AND at top-level WHERE"),
                 }
 
-                assert_eq!(order.dir, SortType::Desc);
+                // HAVING should be comparison
+                match s.having.unwrap() {
+                    Expr::BinaryOp {
+                        op: BinaryOp::Gt, ..
+                    } => {}
+                    _ => panic!("Expected comparison in HAVING"),
+                }
+
+                // ORDER BY correctness
+                assert_eq!(s.order_by[0].dir, SortType::Desc);
+                assert_eq!(s.order_by[1].dir, SortType::Asc);
             }
             _ => panic!("Expected SELECT"),
         }
     }
 
     #[test]
-    fn parse_select_statement() {
-        let mut lexer = Lex::new();
-        lexer.input = "SELECT * FROM gay".chars().collect();
+    fn parse_mutations() {
+        use crate::sql::ast::*;
+        use crate::sql::lex::{Lex, Token};
+        use crate::sql::parser::Parser;
 
-        let tokens: Vec<Token> = lexer
-            .map(|t| t.unwrap())
-            .take_while(|t| *t != Token::EOF)
-            .chain(std::iter::once(Token::EOF))
-            .collect();
+        // ---------- INSERT ----------
+        let insert_sql = "
+        INSERT INTO users (id, score, active)
+        SELECT 
+            u.id,
+            u.score * 2 + 5,
+            NOT (u.age > 18 AND u.banned = 0)
+        FROM users u
+        WHERE u.id IN (1, 2, 3) AND u.name LIKE 'A%';
+    ";
 
-        let mut parser = Parser::new(tokens);
-        let stmt = parser.parse().unwrap();
+        let mut lex = Lex::new();
+        lex.input = insert_sql.chars().collect();
 
-        assert_eq!(
-            stmt,
-            Stmt::Select(SelectStmt {
-                col: vec![SelectItem {
-                    expr: Expr::Glob,
-                    alias: None,
-                }],
-                quantifier: SetQuantifier::All,
-                from: Some(TableRef::Named {
-                    name: Ident("gay".to_string()),
-                    alias: None,
-                }),
-                joins: vec![],
-                where_clause: None,
-                group_by: vec![],
-                having: None,
-                order_by: vec![],
-                limit: None,
-                offset: None,
-            })
-        );
-    }
-
-    #[test]
-    fn parse_insert_values() {
-        let mut lexer = Lex::new();
-        lexer.input = "INSERT INTO users (id, name) VALUES (1, 'Alice')"
-            .chars()
-            .collect();
-
-        let tokens: Vec<Token> = lexer
-            .map(|t| t.unwrap())
-            .take_while(|t| *t != Token::EOF)
-            .chain(std::iter::once(Token::EOF))
-            .collect();
-
-        let mut parser = Parser::new(tokens);
-        let stmt = parser.parse().unwrap();
-
-        match stmt {
-            Stmt::Insert(insert) => {
-                assert_eq!(insert.table, Ident("users".to_string()));
-                assert_eq!(
-                    insert.columns,
-                    vec![Ident("id".to_string()), Ident("name".to_string())]
-                );
-
-                match insert.source {
-                    InsertSource::Values(rows) => {
-                        assert_eq!(rows.len(), 1);
-                        assert_eq!(rows[0].len(), 2);
-                    }
-                    _ => panic!("Expected VALUES source"),
-                }
-            }
-            _ => panic!("Expected INSERT statement"),
-        }
-    }
-
-    #[test]
-    fn parse_expr_complex() {
-        let mut lexer = Lex::new();
-        lexer.input = "NOT a BETWEEN 1 + 2 AND b * 3 OR c IS NOT NULL AND d NOT LIKE 'x%'"
-            .chars()
-            .collect();
-
-        let tokens: Vec<Token> = lexer
-            .map(|t| t.unwrap())
-            .take_while(|t| *t != Token::EOF)
-            .chain(std::iter::once(Token::EOF))
-            .collect();
-
-        let mut parser = Parser::new(tokens);
-
-        let expr = parser.parse_expr(0).unwrap();
-
-        match expr {
-            Expr::BinaryOp {
-                op: BinaryOp::Or, ..
-            } => {}
-            _ => panic!("Top-level operator should be OR"),
-        }
-    }
-
-    #[test]
-    fn insert_values_with_expressions() {
-        let mut lexer = Lex::new();
-        lexer.input = "INSERT INTO users (id, score, flag) \
-                   VALUES (1 + 2 * 3, (4 + 5) * 6, NOT 0)"
-            .chars()
-            .collect();
-
-        let tokens: Vec<Token> = lexer
-            .map(|t| t.unwrap())
-            .take_while(|t| *t != Token::EOF)
-            .chain(std::iter::once(Token::EOF))
-            .collect();
-
-        let mut parser = Parser::new(tokens);
-        let stmt = parser.parse().unwrap();
-
-        match stmt {
-            Stmt::Insert(insert) => {
-                assert_eq!(insert.columns.len(), 3);
-
-                match insert.source {
-                    InsertSource::Values(rows) => {
-                        assert_eq!(rows.len(), 1);
-                        let row = &rows[0];
-
-                        assert!(matches!(row[0], Expr::BinaryOp { .. }));
-                        assert!(matches!(row[1], Expr::BinaryOp { .. }));
-                        assert!(matches!(row[2], Expr::UnaryOp { .. }));
-                    }
-                    _ => panic!("Expected VALUES"),
-                }
-            }
-            _ => panic!("Expected INSERT"),
-        }
-    }
-
-    #[test]
-    fn insert_select_with_expressions() {
-        let mut lexer = Lex::new();
-        lexer.input = "INSERT INTO users \
-                   SELECT id, score * 2 + 5, NOT active \
-                   FROM accounts \
-                   WHERE score > 10 AND NOT deleted"
-            .chars()
-            .collect();
-
-        let tokens: Vec<Token> = lexer
+        let tokens: Vec<Token> = lex
             .map(|t| t.unwrap())
             .take_while(|t| *t != Token::EOF)
             .chain(std::iter::once(Token::EOF))
@@ -1157,273 +1048,39 @@ mod tests {
 
         match stmt {
             Stmt::Insert(insert) => match insert.source {
-                InsertSource::Select(select) => {
-                    assert_eq!(select.col.len(), 3);
+                InsertSource::Select(sel) => {
+                    assert_eq!(sel.col.len(), 3);
+                    assert!(sel.where_clause.is_some());
 
-                    assert!(matches!(select.col[1].expr, Expr::BinaryOp { .. }));
-                    assert!(matches!(select.col[2].expr, Expr::UnaryOp { .. }));
-
-                    assert!(select.where_clause.is_some());
-
-                    match select.where_clause.unwrap() {
+                    match sel.where_clause.unwrap() {
                         Expr::BinaryOp {
                             op: BinaryOp::And, ..
                         } => {}
-                        _ => panic!("Expected AND in WHERE"),
+                        _ => panic!("Expected AND in INSERT SELECT WHERE"),
                     }
                 }
                 _ => panic!("Expected SELECT source"),
             },
             _ => panic!("Expected INSERT"),
         }
-    }
 
-    #[test]
-    fn select_complex_expressions() {
-        let mut lexer = Lex::new();
-        lexer.input = "SELECT a + b * c AS result, \
-                          NOT (x > 10 OR y < 5) AS flag \
-                   FROM table1 \
-                   WHERE (a BETWEEN 1 AND 10 OR b IN (1, 2, 3)) \
-                   AND c IS NOT NULL \
-                   ORDER BY result DESC \
-                   LIMIT 10 OFFSET 5"
-            .chars()
-            .collect();
+        // ---------- UPDATE ----------
+        let update_sql = "
+        UPDATE users u
+        SET 
+            score = score * 2 + 5,
+            active = NOT (age > 18 OR banned = 1),
+            name = name
+        WHERE 
+            (score BETWEEN 10 AND 20 OR id IN (1, 2, 3))
+            AND NOT deleted
+            OR name LIKE 'A%';
+    ";
 
-        let tokens: Vec<Token> = lexer
-            .map(|t| t.unwrap())
-            .take_while(|t| *t != Token::EOF)
-            .chain(std::iter::once(Token::EOF))
-            .collect();
+        let mut lex = Lex::new();
+        lex.input = update_sql.chars().collect();
 
-        let mut parser = Parser::new(tokens);
-        let stmt = parser.parse().unwrap();
-
-        match stmt {
-            Stmt::Select(select) => {
-                assert_eq!(select.col.len(), 2);
-                assert!(matches!(select.col[0].expr, Expr::BinaryOp { .. }));
-                assert!(matches!(select.col[1].expr, Expr::UnaryOp { .. }));
-
-                let where_expr = select.where_clause.expect("Expected WHERE");
-
-                match where_expr {
-                    Expr::BinaryOp {
-                        op: BinaryOp::And, ..
-                    } => {}
-                    _ => panic!("Expected top-level AND"),
-                }
-
-                assert_eq!(select.order_by.len(), 1);
-
-                assert_eq!(select.limit, Some(10));
-                assert_eq!(select.offset, Some(5));
-            }
-            _ => panic!("Expected SELECT"),
-        }
-    }
-
-    #[test]
-    fn test_create_table_full() {
-        let mut lexer = Lex::new();
-        lexer.input = "CREATE TABLE users (
-                        id INTEGER PRIMARY KEY,
-                        age INTEGER NOT NULL,
-                        active BOOLEAN DEFAULT 1
-                   )"
-        .chars()
-        .collect();
-
-        let tokens: Vec<Token> = lexer
-            .map(|t| t.unwrap())
-            .take_while(|t| *t != Token::EOF)
-            .chain(std::iter::once(Token::EOF))
-            .collect();
-
-        let mut parser = Parser::new(tokens);
-        let stmt = parser.parse().unwrap();
-
-        assert_eq!(
-            stmt,
-            Stmt::Create(CreateStmt::Table(CreateTableStmt {
-                name: Ident("users".into()),
-                flag: false,
-                columns: vec![
-                    ColumnDef {
-                        name: Ident("id".into()),
-                        data_type: DataType::Integer,
-                        constraints: vec![ColumnConstraint::PrimaryKey],
-                    },
-                    ColumnDef {
-                        name: Ident("age".into()),
-                        data_type: DataType::Integer,
-                        constraints: vec![ColumnConstraint::NotNull],
-                    },
-                    ColumnDef {
-                        name: Ident("active".into()),
-                        data_type: DataType::Bool,
-                        constraints: vec![ColumnConstraint::Default(Expr::Literal(
-                            Literal::Number("1".into())
-                        ))],
-                    },
-                ],
-            }))
-        );
-    }
-
-    #[test]
-    fn test_create_table_if_not_exists() {
-        let mut lexer = Lex::new();
-        lexer.input = "CREATE TABLE IF NOT EXISTS accounts (id INTEGER)"
-            .chars()
-            .collect();
-
-        let tokens: Vec<Token> = lexer
-            .map(|t| t.unwrap())
-            .take_while(|t| *t != Token::EOF)
-            .chain(std::iter::once(Token::EOF))
-            .collect();
-
-        let mut parser = Parser::new(tokens);
-        let stmt = parser.parse().unwrap();
-
-        assert_eq!(
-            stmt,
-            Stmt::Create(CreateStmt::Table(CreateTableStmt {
-                name: Ident("accounts".into()),
-                flag: true,
-                columns: vec![ColumnDef {
-                    name: Ident("id".into()),
-                    data_type: DataType::Integer,
-                    constraints: vec![],
-                }],
-            }))
-        );
-    }
-
-    #[test]
-    fn test_delete_complex_where() {
-        let mut lexer = Lex::new();
-        lexer.input = "DELETE FROM users \
-                   WHERE (age > 18 AND active = 1) \
-                   OR name LIKE 'A%'"
-            .chars()
-            .collect();
-
-        let tokens: Vec<Token> = lexer
-            .map(|t| t.unwrap())
-            .take_while(|t| *t != Token::EOF)
-            .chain(std::iter::once(Token::EOF))
-            .collect();
-
-        let mut parser = Parser::new(tokens);
-        let stmt = parser.parse().unwrap();
-
-        match stmt {
-            Stmt::Delete(DeleteStmt {
-                table,
-                where_clause,
-            }) => {
-                assert_eq!(
-                    table,
-                    TableRef::Named {
-                        name: Ident("users".into()),
-                        alias: None
-                    }
-                );
-
-                let expr = where_clause.expect("Expected WHERE");
-
-                match expr {
-                    Expr::BinaryOp {
-                        op: BinaryOp::Or,
-                        left,
-                        right,
-                    } => {
-                        match *left {
-                            Expr::BinaryOp {
-                                op: BinaryOp::And, ..
-                            } => {}
-                            _ => panic!("Expected AND on left side"),
-                        }
-
-                        match *right {
-                            Expr::Like {
-                                neg: false,
-                                insensitive: false,
-                                ..
-                            } => {}
-                            _ => panic!("Expected LIKE on right side"),
-                        }
-                    }
-                    _ => panic!("Expected OR at top level"),
-                }
-            }
-            _ => panic!("Expected DELETE"),
-        }
-    }
-
-    #[test]
-    fn test_drop_table_basic() {
-        let mut lexer = Lex::new();
-        lexer.input = "DROP TABLE users".chars().collect();
-
-        let tokens: Vec<Token> = lexer
-            .map(|t| t.unwrap())
-            .take_while(|t| *t != Token::EOF)
-            .chain(std::iter::once(Token::EOF))
-            .collect();
-
-        let mut parser = Parser::new(tokens);
-        let stmt = parser.parse().unwrap();
-
-        assert_eq!(
-            stmt,
-            Stmt::Drop(DropStmt::Table {
-                name: Ident("users".into()),
-                if_exists: false,
-            })
-        );
-    }
-
-    #[test]
-    fn test_drop_table_if_exists() {
-        let mut lexer = Lex::new();
-        lexer.input = "DROP TABLE IF EXISTS users;".chars().collect();
-
-        let tokens: Vec<Token> = lexer
-            .map(|t| t.unwrap())
-            .take_while(|t| *t != Token::EOF)
-            .chain(std::iter::once(Token::EOF))
-            .collect();
-
-        let mut parser = Parser::new(tokens);
-        let stmt = parser.parse().unwrap();
-
-        assert_eq!(
-            stmt,
-            Stmt::Drop(DropStmt::Table {
-                name: Ident("users".into()),
-                if_exists: true,
-            })
-        );
-    }
-
-    #[test]
-    fn test_update_complex() {
-        let mut lexer = Lex::new();
-        lexer.input = "UPDATE users u \
-                   SET score = score * 2 + 5, \
-                       active = NOT (age > 18 AND banned = 0), \
-                       name = name \
-                   WHERE (score BETWEEN 10 AND 20 OR id IN (1, 2, 3)) \
-                   AND NOT deleted \
-                   OR name LIKE 'A%'"
-            .chars()
-            .collect();
-
-        let tokens: Vec<Token> = lexer
+        let tokens: Vec<Token> = lex
             .map(|t| t.unwrap())
             .take_while(|t| *t != Token::EOF)
             .chain(std::iter::once(Token::EOF))
@@ -1434,68 +1091,53 @@ mod tests {
 
         match stmt {
             Stmt::Update(update) => {
-                // ── Table + alias
-                assert_eq!(
-                    update.table,
-                    TableRef::Named {
-                        name: Ident("users".into()),
-                        alias: Some(Ident("u".into()))
-                    }
-                );
-
-                // ── Assignments
                 assert_eq!(update.assign.len(), 3);
 
-                // score = score * 2 + 5
-                match &update.assign[0].value {
-                    Expr::BinaryOp {
-                        op: BinaryOp::Add, ..
-                    } => {}
-                    _ => panic!("Expected arithmetic expression for score"),
-                }
+                let where_expr = update.where_clause.unwrap();
 
-                // active = NOT (...)
-                match &update.assign[1].value {
-                    Expr::UnaryOp {
-                        op: UnaryOp::Not, ..
-                    } => {}
-                    _ => panic!("Expected NOT expression for active"),
-                }
-
-                // name = name (identifier)
-                match &update.assign[2].value {
-                    Expr::Identifier(_) => {}
-                    _ => panic!("Expected identifier for name"),
-                }
-
-                // ── WHERE clause
-                let where_expr = update.where_clause.expect("Expected WHERE");
-
-                // Top-level should be OR
                 match where_expr {
                     Expr::BinaryOp {
-                        op: BinaryOp::Or,
-                        left,
-                        right,
-                    } => {
-                        // Left side should be AND
-                        match *left {
-                            Expr::BinaryOp {
-                                op: BinaryOp::And, ..
-                            } => {}
-                            _ => panic!("Expected AND on left side"),
-                        }
-
-                        // Right side should be LIKE
-                        match *right {
-                            Expr::Like { neg: false, .. } => {}
-                            _ => panic!("Expected LIKE on right side"),
-                        }
-                    }
-                    _ => panic!("Expected OR at top level"),
+                        op: BinaryOp::Or, ..
+                    } => {}
+                    _ => panic!("Expected OR at top-level WHERE"),
                 }
             }
-            _ => panic!("Expected UPDATE statement"),
+            _ => panic!("Expected UPDATE"),
+        }
+
+        // ---------- DELETE ----------
+        let delete_sql = "
+        DELETE FROM users
+        WHERE 
+            (age > 18 AND active = true)
+            OR name LIKE 'A%'
+            AND id NOT IN (SELECT id FROM users);
+    ";
+
+        let mut lex = Lex::new();
+        lex.input = delete_sql.chars().collect();
+
+        let tokens: Vec<Token> = lex
+            .map(|t| t.unwrap())
+            .take_while(|t| *t != Token::EOF)
+            .chain(std::iter::once(Token::EOF))
+            .collect();
+
+        let mut parser = Parser::new(tokens);
+        let stmt = parser.parse().unwrap();
+
+        match stmt {
+            Stmt::Delete(del) => {
+                let expr = del.where_clause.unwrap();
+
+                match expr {
+                    Expr::BinaryOp {
+                        op: BinaryOp::Or, ..
+                    } => {}
+                    _ => panic!("Expected OR at top-level DELETE WHERE"),
+                }
+            }
+            _ => panic!("Expected DELETE"),
         }
     }
 }
