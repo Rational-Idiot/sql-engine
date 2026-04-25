@@ -134,4 +134,22 @@ impl DiskManager {
         self.file.seek(SeekFrom::Start(page_offset(id)))?;
         self.file.write_all(data)
     }
+
+    pub fn allocate(&mut self) -> io::Result<PageId> {
+        if let Some(id) = self.free_list.pop() {
+            return Ok(id);
+        }
+
+        // Extend the page count by writing a zero page
+        let id = self.page_count;
+        self.page_count += 1;
+        let buf = [0u8; PAGE_SIZE];
+        self.file.seek(SeekFrom::Start(page_offset(id)))?;
+        self.file.write_all(&buf)?;
+        Ok(id)
+    }
+
+    pub fn free_page(&mut self, id: PageId) {
+        self.free_list.push(id);
+    }
 }
