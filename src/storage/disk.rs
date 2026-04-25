@@ -120,4 +120,18 @@ impl DiskManager {
         self.file.seek(SeekFrom::Start(0))?;
         self.file.write_all(&buf)
     }
+
+    fn read_page(&mut self, id: PageId) -> io::Result<[u8; PAGE_SIZE]> {
+        debug_assert!(id != NULL_PAGE, "read NULL_PAGE");
+        let mut buf = [0u8; PAGE_SIZE];
+        self.file.seek(SeekFrom::Start(page_offset(id)))?;
+        self.file.read_exact(&mut buf)?;
+        Ok(buf)
+    }
+
+    fn write_page(&mut self, id: PageId, data: &[u8; PAGE_SIZE]) -> io::Result<()> {
+        debug_assert!(id != NULL_PAGE, "write NULL_PAGE");
+        self.file.seek(SeekFrom::Start(page_offset(id)))?;
+        self.file.write_all(data)
+    }
 }
