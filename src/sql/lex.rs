@@ -453,50 +453,193 @@ mod tests {
     use crate::sql::lex::{Lex, Token};
 
     #[test]
-    fn tokenise_paren() {
-        let mut lexer = Lex::new();
-        lexer.input = vec!['(', ')'];
-        let mut res: Vec<Token> = Vec::new();
+    fn lexer_full() {
+        use crate::sql::lex::{Lex, Token};
 
-        while let Ok(t) = lexer.next_token() {
-            if t == Token::EOF {
-                res.push(t);
-                break;
-            }
-            res.push(t);
-        }
-        assert_eq!(res, vec![Token::LParen, Token::RParen, Token::EOF])
+        let input = "
+        SELECT DISTINCT u.id, COUNT(*), SUM(o.amount)
+        FROM users u
+        INNER JOIN orders o ON u.id = o.user_id
+        WHERE u.age >= 18 AND u.name LIKE 'A%'
+        GROUP BY u.id
+        HAVING SUM(o.amount) > 100.50
+        ORDER BY u.id DESC
+        LIMIT 10 OFFSET 5;
+    ";
+
+        let mut lexer = Lex::new();
+        lexer.input = input.chars().collect();
+
+        let tokens: Vec<Token> = std::iter::from_fn(|| lexer.next_token().ok())
+            .take_while(|t| *t != Token::EOF)
+            .chain(std::iter::once(Token::EOF))
+            .collect();
+
+        assert_eq!(
+            tokens,
+            vec![
+                Token::Select,
+                Token::Distinct,
+                Token::Id("u".into()),
+                Token::Dot,
+                Token::Id("id".into()),
+                Token::Comma,
+                Token::Id("COUNT".into()),
+                Token::LParen,
+                Token::Star,
+                Token::RParen,
+                Token::Comma,
+                Token::Id("SUM".into()),
+                Token::LParen,
+                Token::Id("o".into()),
+                Token::Dot,
+                Token::Id("amount".into()),
+                Token::RParen,
+                Token::From,
+                Token::Id("users".into()),
+                Token::Id("u".into()),
+                Token::Inner,
+                Token::Join,
+                Token::Id("orders".into()),
+                Token::Id("o".into()),
+                Token::On,
+                Token::Id("u".into()),
+                Token::Dot,
+                Token::Id("id".into()),
+                Token::Equal,
+                Token::Id("o".into()),
+                Token::Dot,
+                Token::Id("user_id".into()),
+                Token::Where,
+                Token::Id("u".into()),
+                Token::Dot,
+                Token::Id("age".into()),
+                Token::GreaterEqual,
+                Token::Number("18".into()),
+                Token::And,
+                Token::Id("u".into()),
+                Token::Dot,
+                Token::Id("name".into()),
+                Token::Like,
+                Token::String("A%".into()),
+                Token::Group,
+                Token::By,
+                Token::Id("u".into()),
+                Token::Dot,
+                Token::Id("id".into()),
+                Token::Having,
+                Token::Id("SUM".into()),
+                Token::LParen,
+                Token::Id("o".into()),
+                Token::Dot,
+                Token::Id("amount".into()),
+                Token::RParen,
+                Token::Greater,
+                Token::Number("100.50".into()),
+                Token::Order,
+                Token::By,
+                Token::Id("u".into()),
+                Token::Dot,
+                Token::Id("id".into()),
+                Token::Desc,
+                Token::Limit,
+                Token::Number("10".into()),
+                Token::Offset,
+                Token::Number("5".into()),
+                Token::Semicolon,
+                Token::EOF,
+            ]
+        );
     }
 
     #[test]
-    fn tokenise_create_table_query() {
-        let mut lexer = Lex::new();
-        lexer.input = "CREATE TABLE users (id, name);".chars().collect();
-        let mut res: Vec<Token> = Vec::new();
+    fn lexer_edge_cases() {
+        use crate::sql::lex::{Lex, Token};
 
-        for tok in lexer {
-            if let Ok(t) = tok {
-                if t == Token::EOF {
-                    res.push(t);
-                    break;
-                }
-                res.push(t);
-            }
-        }
+        // ── Mixed case keywords + identifiers
+        let input = "select SELECT Select foo SELECT1 _bar";
+
+        let mut lexer = Lex::new();
+        lexer.input = input.chars().collect();
+
+        let tokens: Vec<Token> = std::iter::from_fn(|| lexer.next_token().ok())
+            .take_while(|t| *t != Token::EOF)
+            .collect();
 
         assert_eq!(
-            res,
+            tokens,
             vec![
-                Token::Create,
-                Token::Table,
-                Token::Id("users".to_string()),
-                Token::LParen,
-                Token::Id("id".to_string()),
-                Token::Comma,
-                Token::Id("name".to_string()),
-                Token::RParen,
-                Token::Semicolon,
+                Token::Select,
+                Token::Select,
+                Token::Select,
+                Token::Id("foo".into()),
+                Token::Id("SELECT1".into()),
+                Token::Id("_bar".into()),
             ]
         );
+
+        // ── All operators
+        let input = "< <= <> > >= =";
+        let mut lexer = Lex::new();
+        lexer.input = input.chars().collect();
+
+        let tokens: Vec<Token> = std::iter::from_fn(|| lexer.next_token().ok())
+            .take_while(|t| *t != Token::EOF)
+            .collect();
+
+        assert_eq!(
+            tokens,
+            vec![
+                Token::Less,
+                Token::LessEqual,
+                Token::NotEqual,
+                Token::Greater,
+                Token::GreaterEqual,
+                Token::Equal,
+            ]
+        );
+
+        // ── Numbers (int + float)
+        let input = "123 45.67 0 0.001";
+        let mut lexer = Lex::new();
+        lexer.input = input.chars().collect();
+
+        let tokens: Vec<Token> = std::iter::from_fn(|| lexer.next_token().ok())
+            .take_while(|t| *t != Token::EOF)
+            .collect();
+
+        assert_eq!(
+            tokens,
+            vec![
+                Token::Number("123".into()),
+                Token::Number("45.67".into()),
+                Token::Number("0".into()),
+                Token::Number("0.001".into()),
+            ]
+        );
+
+        // ── Unterminated string should error
+        let input = "'hello";
+        let mut lexer = Lex::new();
+        lexer.input = input.chars().collect();
+
+        let err = lexer.next_token();
+        assert!(err.is_err(), "Expected unterminated string error");
+
+        // ── Iterator vs manual consistency
+        let input = "SELECT 1 + 2";
+        let mut lexer1 = Lex::new();
+        lexer1.input = input.chars().collect();
+
+        let manual: Vec<Token> = std::iter::from_fn(|| lexer1.next_token().ok())
+            .take_while(|t| *t != Token::EOF)
+            .collect();
+
+        let mut lexer2 = Lex::new();
+        lexer2.input = input.chars().collect();
+
+        let iter: Vec<Token> = lexer2.map(|t| t.unwrap()).collect();
+
+        assert_eq!(manual, iter);
     }
 }
