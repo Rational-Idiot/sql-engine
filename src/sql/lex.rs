@@ -448,9 +448,9 @@ impl fmt::Display for Token {
     }
 }
 
+// ThankGPT
 #[cfg(test)]
 mod tests {
-    use crate::sql::lex::{Lex, Token};
 
     #[test]
     fn lexer_full() {
