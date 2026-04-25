@@ -2,7 +2,7 @@
 use crate::storage::page::{NULL_PAGE, PAGE_SIZE, PageId};
 use std::{
     fs::{File, OpenOptions},
-    io::{self, Read, Seek},
+    io::{self, Read, Seek, SeekFrom, Write},
     path::Path,
 };
 
@@ -88,5 +88,36 @@ impl DiskManager {
             head = next;
         }
         Ok(list)
+    }
+
+    pub fn create(path: impl AsRef<Path>) -> io::Result<Self> {
+        let file = OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .truncate(true)
+            .open(path)?;
+
+        let mut dm = Self {
+            file,
+            free_list: Vec::new(),
+            page_count: 1,
+            commit_root: NULL_PAGE,
+        };
+
+        dm.write_header(NULL_PAGE)?; // Initial Head
+        Ok(dm)
+    }
+
+    fn write_header(&mut self, free_head: PageId) -> io::Result<()> {
+        let mut buf = [0u8; PAGE_SIZE];
+        buf[0..8].copy_from_slice(&MAGIC.to_le_bytes());
+        buf[8..12].copy_from_slice(&VERSION.to_le_bytes());
+        buf[12..16].copy_from_slice(&(PAGE_SIZE as u32).to_le_bytes());
+        buf[16..24].copy_from_slice(&self.commit_root.to_le_bytes());
+        buf[24..32].copy_from_slice(&free_head.to_le_bytes());
+        buf[32..40].copy_from_slice(&self.page_count.to_le_bytes());
+        self.file.seek(SeekFrom::Start(0))?;
+        self.file.write_all(&buf)
     }
 }
