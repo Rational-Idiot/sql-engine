@@ -1,5 +1,5 @@
 pub const PAGE_SIZE: usize = 4096;
-pub type PageId = u64;
+pub type PageId = u64; // 8 Bytes
 pub const NULL_PAGE: PageId = u64::MAX;
 
 pub mod tag {
