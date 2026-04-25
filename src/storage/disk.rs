@@ -1,5 +1,5 @@
 #![allow(dead_code)]
-use crate::storage::page::{NULL_PAGE, PAGE_SIZE, PageId};
+use crate::storage::page::{NULL_PAGE, PAGE_SIZE, PageId, tag};
 use std::{
     fs::{File, OpenOptions},
     io::{self, Read, Seek, SeekFrom, Write},
@@ -151,5 +151,43 @@ impl DiskManager {
 
     pub fn free_page(&mut self, id: PageId) {
         self.free_list.push(id);
+    }
+
+    pub fn set_commit_root(&mut self, root: PageId) -> io::Result<()> {
+        self.commit_root = root;
+
+        self.file.sync_data()?;
+        let free_head = self.flush_fl()?;
+        self.write_header(free_head)?;
+        self.file.sync_data()
+    }
+
+    fn flush_fl(&mut self) -> io::Result<PageId> {
+        if self.free_list.is_empty() {
+            return Ok(NULL_PAGE);
+        }
+
+        let mut head = NULL_PAGE;
+
+        for chunk in self.free_list.chunks(FL_IDS_PER_PAGE) {
+            let id = self.page_count;
+            self.page_count += 1;
+
+            let mut buf = [0u8; PAGE_SIZE];
+            buf[0] = tag::FREELIST;
+            buf[1..5].copy_from_slice(&(chunk.len() as u32).to_le_bytes());
+            buf[5..13].copy_from_slice(&head.to_le_bytes());
+
+            for (i, &pid) in chunk.iter().enumerate() {
+                let off = 13 + i * 8;
+                buf[off..off + 8].copy_from_slice(&pid.to_le_bytes());
+            }
+
+            self.file.seek(SeekFrom::Start(page_offset(id)))?;
+            self.file.write_all(&buf)?;
+            head = id;
+        }
+
+        Ok(head)
     }
 }
