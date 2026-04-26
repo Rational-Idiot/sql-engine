@@ -57,3 +57,46 @@ impl Ord for Key {
         }
     }
 }
+
+impl Key {
+    pub fn serialize(&self) -> [u8; KEY_SIZE] {
+        let mut buf = [0u8; KEY_SIZE];
+        match self {
+            Key::Int(i) => {
+                buf[0] = 0;
+                buf[1..9].copy_from_slice(&i.to_le_bytes());
+            }
+
+            Key::Float(f) => {
+                buf[0] = 1;
+                buf[1..9].copy_from_slice(&f.0.to_le_bytes());
+            }
+
+            Key::Bool(b) => {
+                buf[0] = 2;
+                buf[1] = *b as u8;
+            }
+
+            Key::Text(s) => {
+                buf[0] = 3;
+                let bytes = s.as_bytes();
+                let n = bytes.len().min(8);
+                buf[1..1 + n].copy_from_slice(&bytes[..n]);
+            }
+        }
+        buf
+    }
+
+    pub fn deseriablize(buf: [u8; KEY_SIZE]) -> Self {
+        match buf[0] {
+            0 => Key::Int(i64::from_le_bytes(buf[1..9].try_into().unwrap())),
+            1 => Key::Float(F64Key(f64::from_le_bytes(buf[1..9].try_into().unwrap()))),
+            2 => Key::Bool(buf[1] == 1),
+            3 => {
+                let end = buf[1..9].iter().position(|&b| b == 0).unwrap_or(8);
+                Key::Text(String::from_utf8_lossy(&buf[1..1 + end]).into_owned())
+            }
+            t => panic!("Invalid key tag: {t:#x}"),
+        }
+    }
+}
