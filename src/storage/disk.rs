@@ -162,6 +162,8 @@ impl DiskManager {
         self.file.sync_data()
     }
 
+    /// Write the in-memory free list to disk as a linked chain of FREELIST pages.
+    /// Returns the head PageId (or NULL_PAGE if the list is empty).
     fn flush_fl(&mut self) -> io::Result<PageId> {
         if self.free_list.is_empty() {
             return Ok(NULL_PAGE);
