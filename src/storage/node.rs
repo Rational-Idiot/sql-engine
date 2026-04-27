@@ -14,6 +14,8 @@
 
 use std::cmp::Ordering;
 
+use crate::storage::page::{PAGE_SIZE, PageId, tag};
+
 pub const KEY_SIZE: usize = 9;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -98,5 +100,69 @@ impl Key {
             }
             t => panic!("Invalid key tag: {t:#x}"),
         }
+    }
+}
+
+// Internal Nodes
+//  Layout :
+//   [0]        tag:       u8
+//   [1..3]     key_count: u16
+//   [3]        padding:   u8
+//   [4 .. 4 + MAX_INTERNAL_KEYS * KEY_SIZE]                         keys
+//   [.. end of used child area]    children (PageId u64)
+//
+// Capacity:  4 + N*9 + (N+1)*8 ≤ 4096
+//            17N ≤ 4084  →  N = 240
+
+pub const MAX_INTERNAL_KEYS: usize = 240;
+pub const INTERNAL_KEYS_OFF: usize = 4;
+pub const INTERNAL_CHILDREN_OFF: usize = INTERNAL_KEYS_OFF + MAX_INTERNAL_KEYS * KEY_SIZE;
+
+pub struct InternalNode {
+    pub keys: Vec<Key>,        // len == n
+    pub children: Vec<PageId>, // len == n + 1
+}
+
+impl InternalNode {
+    /// Index of the child that should contain key.
+    pub fn find_child(&self, key: &Key) -> usize {
+        match self.keys.binary_search(key) {
+            Ok(i) => i + 1, // key == keys[i] - go to right subtree
+            Err(i) => i,    // key < keys[i] - go to child i
+        }
+    }
+
+    pub fn serialize(&self) -> [u8; PAGE_SIZE] {
+        let mut buf = [0u8; PAGE_SIZE];
+        buf[0] = tag::INTERNAL;
+        buf[1..3].copy_from_slice(&(self.keys.len() as u16).to_le_bytes());
+
+        for (i, key) in self.keys.iter().enumerate() {
+            let off = INTERNAL_KEYS_OFF + i * KEY_SIZE;
+            buf[off..off + KEY_SIZE].copy_from_slice(&key.serialize());
+        }
+        for (i, &child) in self.children.iter().enumerate() {
+            let off = INTERNAL_CHILDREN_OFF + i * 8;
+            buf[off..off + 8].copy_from_slice(&child.to_le_bytes());
+        }
+        buf
+    }
+
+    pub fn deserialize(buf: &[u8; PAGE_SIZE]) -> Self {
+        let n = u16::from_le_bytes(buf[1..3].try_into().unwrap()) as usize;
+
+        let mut keys = Vec::with_capacity(n);
+        for i in 0..n {
+            let off = INTERNAL_KEYS_OFF + i * KEY_SIZE;
+            keys.push(Key::deseriablize(
+                buf[off..off + KEY_SIZE].try_into().unwrap(),
+            ));
+        }
+        let mut children = Vec::with_capacity(n + 1);
+        for i in 0..=n {
+            let off = INTERNAL_CHILDREN_OFF + i * 8;
+            children.push(u64::from_le_bytes(buf[off..off + 8].try_into().unwrap()));
+        }
+        InternalNode { keys, children }
     }
 }
