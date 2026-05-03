@@ -10,7 +10,11 @@ A powerful sql engine that (hopefully) supports all common sql keywords - {The a
 - [x] Make a decorated AST
   - [x] Define the AST
   - [x] Fill the AST
-- [ ] Make a COW B+ Implementation
+- [ ] Make a COW B+Link Implementation
+  - [x] implement paging
+  - [x] structure the nodes
+  - [ ] Decide the serialization architecute
+  - [ ] Make the B+Link Tree
 - [ ] Build the Actual Engine
 - [ ] Profit
 
