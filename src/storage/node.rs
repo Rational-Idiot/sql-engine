@@ -198,6 +198,7 @@ impl ColValue {
                 // buf[65..72] - 7 bit PageId, which gives us 2^56 - 1 possible pages
                 buf[..64].copy_from_slice(inline.as_ref());
                 buf[64] = *len;
+                // We only store the fist 7 bytes => THe highest byte is always 0 and can be ommitted
                 buf[65..72].copy_from_slice(&overflow.to_le_bytes()[..7]);
             }
             ColValue::Null => {
