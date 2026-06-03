@@ -1,6 +1,6 @@
-# Name: To Be Decided
+# Chronicle DB: A Database that remembers eveyrthing
 
-A powerful sql engine that (hopefully) supports all common sql keywords - {The actual idea is much bigger}
+A powerful sql compliant database that has git-like version control for all your data ;)
 
 ## Todo
 
@@ -16,6 +16,8 @@ A powerful sql engine that (hopefully) supports all common sql keywords - {The a
   - [ ] Decide the serialization architecute
   - [ ] Make the B+Link Tree
 - [ ] Build the Actual Engine
+- [ ] Build the version control layer
+- [ ] PARALLEL PROCESSING
 - [ ] Profit
 
 ## Features that I will implement some day
