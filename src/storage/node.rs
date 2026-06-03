@@ -112,16 +112,23 @@ impl Key {
 #[derive(Debug)]
 pub enum DeserializeError {
     InavlidFormat(String),
+    InvalidCall(String, String),
+    AllocationError(String),
 }
 
 impl Display for DeserializeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             DeserializeError::InavlidFormat(s) => write!(f, "Invalid Conversion: {s}"),
+            DeserializeError::AllocationError(s) => write!(f, "Allocation Error: {s}"),
+            DeserializeError::InvalidCall(fun, t) => {
+                write!(f, "Called function: {fun} with invalid type: {t}")
+            }
         }
     }
 }
 
+// Thanks Claude ;) {Just for the structure BTW}
 // Internal Nodes
 //  Layout :
 //   [0]        tag:       u8
@@ -294,4 +301,128 @@ impl ColValue {
             }
         }
     }
+
+    pub fn text_value<F>(&self, mut get_bytes: F) -> Result<String, DeserializeError>
+    where
+        F: FnMut(PageId) -> Result<Vec<u8>, DeserializeError>,
+    {
+        match self {
+            ColValue::Text {
+                inline,
+                len,
+                overflow,
+            } => {
+                let mut bytes = inline[..*len as usize].to_vec();
+                let mut nxt = *overflow;
+                while nxt != NULL_PAGE {
+                    let page = get_bytes(nxt)?;
+                    let (chain_nxt, chunk) = parse_overflow(&page)?;
+                    bytes.extend_from_slice(chunk);
+                    nxt = chain_nxt;
+                }
+                String::from_utf8(bytes).map_err(|e| {
+                    DeserializeError::InavlidFormat(format!(
+                        "ColValue::text_value : inavlid UTF-8 - {e}"
+                    ))
+                })
+            }
+
+            ColValue::Null => Err(DeserializeError::InvalidCall(
+                "ColValue::text_value".into(),
+                "Null".into(),
+            )),
+
+            _ => Err(DeserializeError::InvalidCall(
+                "ColValue::text_value".into(),
+                "Non-Text".into(),
+            )),
+        }
+    }
+}
+
+// Overflow Page - [tag: 1][nxt: 8][len: 4][data: till PAGE_SIZE - 13]
+
+pub fn build_overflow_page(next: PageId, data: &[u8]) -> Result<[u8; PAGE_SIZE], DeserializeError> {
+    if data.len() > PAGE_SIZE - 13 {
+        return Err(DeserializeError::InavlidFormat(format!(
+            "Overflow Page: data : {} exceeds maximum: {}",
+            data.len(),
+            PAGE_SIZE - 13
+        )));
+    }
+    let mut page = [0u8; PAGE_SIZE];
+    page[0] = tag::OVERFLOW;
+    page[1..9].copy_from_slice(&next.to_le_bytes());
+    page[9..13].copy_from_slice(&data.len().to_le_bytes());
+    page[13..13 + data.len()].copy_from_slice(data);
+
+    Ok(page)
+}
+
+/// allocate returns the fresh PageID for the next pages
+/// The function returns the first PageID to store in the leaf node and the list of pages that were
+/// created (PageID, page_bytes) to be written to disk
+pub fn build_overflow_chain<F>(
+    data: &[u8],
+    mut allocate: F,
+) -> Result<(PageId, Vec<(PageId, [u8; PAGE_SIZE])>), DeserializeError>
+where
+    F: FnMut() -> Result<PageId, String>,
+{
+    let chunks: Vec<&[u8]> = data.chunks(PAGE_SIZE - 13).collect();
+    if chunks.is_empty() {
+        return Err(DeserializeError::InavlidFormat(
+            "Build Overflow Chain: empty data".into(),
+        ));
+    }
+
+    // Allocate all PageIDs
+    let ids: Vec<PageId> = (0..chunks.len())
+        .map(|_| allocate())
+        .collect::<Result<_, _>>()
+        .map_err(DeserializeError::AllocationError)?;
+
+    let pages: Vec<(PageId, [u8; PAGE_SIZE])> = ids
+        .iter()
+        .zip(chunks.iter())
+        .enumerate()
+        .map(|(i, (&id, chunk))| {
+            let next = if i + 1 < ids.len() {
+                ids[i + 1]
+            } else {
+                NULL_PAGE
+            };
+
+            let page = build_overflow_page(next, chunk)?;
+            Ok((id, page))
+        })
+        .collect::<Result<_, DeserializeError>>()?;
+
+    Ok((ids[0], pages))
+}
+
+pub fn parse_overflow(page: &[u8]) -> Result<(PageId, &[u8]), DeserializeError> {
+    // tag + next (8 bytes) + len (4 bytes)
+    if page.len() < 1 + 8 + 4 {
+        return Err(DeserializeError::InavlidFormat(
+            "Overflow page too short".into(),
+        ));
+    }
+
+    if page[0] != tag::OVERFLOW {
+        return Err(DeserializeError::InavlidFormat(format!(
+            "Overflow Page: bad tag 0x{:02X}",
+            page[0]
+        )));
+    }
+
+    let nxt = PageId::from_le_bytes(page[1..9].try_into().unwrap());
+    let len = u32::from_le_bytes(page[9..13].try_into().unwrap()) as usize;
+    if page.len() < 13 + len {
+        return Err(DeserializeError::InavlidFormat(format!(
+            "Overflow page: len {len} is greater than page boundary"
+        )));
+    }
+
+    Ok((nxt, &page[13..13 + len]))
 }
