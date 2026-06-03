@@ -5,10 +5,9 @@
 //     Int   - i64 little-endian
 //     Float - f64 little-endian
 //     Bool  - 0x00 or 0x01, rest zeroed
-//     Text  - first 8 UTF-8 bytes, zero-padded (prefix for navigation;
-//              full string is kept in memory for exact leaf comparison)
+//     Text  - first 8 UTF-8 bytes, zero-padded (prefix for navigation full string is kept in memory for exact leaf comparison)
 //
-// Known limitation: Text keys with same 8 byte prefix collid in internal nodes,
+// Known limitation - Text keys with same 8 byte prefix collid in internal nodes,
 // Navigation still gets to correct subtree, exact checking happens at leaf nodes
 // using the full string. Overflow pages for arbitraily long text keys are left for a later pass
 
@@ -164,5 +163,46 @@ impl InternalNode {
             children.push(u64::from_le_bytes(buf[off..off + 8].try_into().unwrap()));
         }
         InternalNode { keys, children }
+    }
+}
+
+pub enum ColValue {
+    Int(i64),   // 8 Bytes
+    Float(f64), // 8 bytes
+    Bool(bool), // 1 bytes
+    /// Inline the text in a node upto 64 bytes
+    /// Excess data is chained with overflow pages
+    /// overflow is NULL Page when string < 64 bytes
+    Text {
+        // 64 bytes inline + 8 byte overfow PageID
+        inline: Box<[u8; 64]>,
+        len: u8,
+        overflow: PageId,
+    },
+    Null,
+}
+
+impl ColValue {
+    pub fn serialize(&self, buf: &mut [u8]) {
+        match self {
+            ColValue::Int(i) => buf[..8].copy_from_slice(&i.to_le_bytes()),
+            ColValue::Float(f) => buf[..8].copy_from_slice(&f.to_le_bytes()),
+            ColValue::Bool(b) => buf[0] = *b as u8,
+            ColValue::Text {
+                inline,
+                len,
+                overflow,
+            } => {
+                // buf[0..64] - Inline Text
+                // buf[64] - Length of the inline text
+                // buf[65..72] - 7 bit PageId, which gives us 2^56 - 1 possible pages
+                buf[..64].copy_from_slice(inline.as_ref());
+                buf[64] = *len;
+                buf[65..72].copy_from_slice(&overflow.to_le_bytes()[..7]);
+            }
+            ColValue::Null => {
+                // IT should be zeroed out by default
+            }
+        }
     }
 }

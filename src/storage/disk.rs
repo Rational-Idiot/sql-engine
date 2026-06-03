@@ -11,11 +11,11 @@ use std::{
 // [8..12]  version:         u32
 // [12..16] page_size:       u32
 // [16..24] commit_root:     PageId
-// [24..32] free_head:       PageId of head of on-disk free-list chain
+// [24..32] free_head:       PageId of head free-list
 // [32..40] page_count:      u64
 // [40..]   reserved / zeroed
 
-const MAGIC: u64 = 0x4442_5452_4545_0001; // "DBTREE\0\1"
+const MAGIC: u64 = 0x4442_5452_4545_0001; // "DBTREE\0\1" in hex
 const VERSION: u32 = 1;
 
 // Free-list page layout
@@ -163,7 +163,7 @@ impl DiskManager {
     }
 
     /// Write the in-memory free list to disk as a linked chain of FREELIST pages.
-    /// Returns the head PageId (or NULL_PAGE if the list is empty).
+    /// Returns the head PageId (or NULL_PAGE if the list is empty)
     fn flush_fl(&mut self) -> io::Result<PageId> {
         if self.free_list.is_empty() {
             return Ok(NULL_PAGE);
