@@ -5,15 +5,15 @@
 //     Int   - i64 little-endian
 //     Float - f64 little-endian
 //     Bool  - 0x00 or 0x01, rest zeroed
-//     Text  - first 8 UTF-8 bytes, zero-padded (prefix for navigation full string is kept in memory for exact leaf comparison)
-//
-// Known limitation - Text keys with same 8 byte prefix collid in internal nodes,
-// Navigation still gets to correct subtree, exact checking happens at leaf nodes
-// using the full string. Overflow pages for arbitraily long text keys are left for a later pass
+//     Text  - first 8 UTF-8 bytes, zero-padded
 
-use std::cmp::Ordering;
+use core::fmt;
+use std::{cmp::Ordering, fmt::Display, str::from_utf8};
 
-use crate::storage::page::{PAGE_SIZE, PageId, tag};
+use crate::{
+    sql::ast::DataType,
+    storage::page::{NULL_PAGE, PAGE_SIZE, PageId, tag},
+};
 
 pub const KEY_SIZE: usize = 9;
 
@@ -88,16 +88,36 @@ impl Key {
         buf
     }
 
-    pub fn deseriablize(buf: [u8; KEY_SIZE]) -> Self {
+    pub fn deseriablize(buf: [u8; KEY_SIZE]) -> Result<Self, DeserializeError> {
+        let payload = buf[1..9]
+            .try_into()
+            .expect("The payload should always be 8 bytes");
         match buf[0] {
-            0 => Key::Int(i64::from_le_bytes(buf[1..9].try_into().unwrap())),
-            1 => Key::Float(F64Key(f64::from_le_bytes(buf[1..9].try_into().unwrap()))),
-            2 => Key::Bool(buf[1] == 1),
+            0 => Ok(Key::Int(i64::from_le_bytes(payload))),
+            1 => Ok(Key::Float(F64Key(f64::from_le_bytes(payload)))),
+            2 => Ok(Key::Bool(buf[1] == 1)),
             3 => {
-                let end = buf[1..9].iter().position(|&b| b == 0).unwrap_or(8);
-                Key::Text(String::from_utf8_lossy(&buf[1..1 + end]).into_owned())
+                let end = payload.iter().position(|&b| b == 0).unwrap_or(8);
+                let text = from_utf8(&payload[..end]).map_err(|e| {
+                    DeserializeError::InavlidFormat(format!("invalid UTF-8 in text key: {e}"))
+                })?;
+
+                Ok(Key::Text(text.to_owned()))
             }
             t => panic!("Invalid key tag: {t:#x}"),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum DeserializeError {
+    InavlidFormat(String),
+}
+
+impl Display for DeserializeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            DeserializeError::InavlidFormat(s) => write!(f, "Invalid Conversion: {s}"),
         }
     }
 }
@@ -147,22 +167,29 @@ impl InternalNode {
         buf
     }
 
-    pub fn deserialize(buf: &[u8; PAGE_SIZE]) -> Self {
-        let n = u16::from_le_bytes(buf[1..3].try_into().unwrap()) as usize;
+    pub fn deserialize(buf: &[u8; PAGE_SIZE]) -> Result<Self, DeserializeError> {
+        let n = u16::from_le_bytes(
+            buf[1..3]
+                .try_into()
+                .expect("u16 header field occupies exactly 2 vytes"),
+        ) as usize;
 
         let mut keys = Vec::with_capacity(n);
         for i in 0..n {
             let off = INTERNAL_KEYS_OFF + i * KEY_SIZE;
             keys.push(Key::deseriablize(
-                buf[off..off + KEY_SIZE].try_into().unwrap(),
-            ));
+                buf[off..off + KEY_SIZE]
+                    .try_into()
+                    .expect("Should be guaranteed by the architecture"),
+            )?);
         }
+
         let mut children = Vec::with_capacity(n + 1);
         for i in 0..=n {
             let off = INTERNAL_CHILDREN_OFF + i * 8;
             children.push(u64::from_le_bytes(buf[off..off + 8].try_into().unwrap()));
         }
-        InternalNode { keys, children }
+        Ok(InternalNode { keys, children })
     }
 }
 
@@ -203,6 +230,67 @@ impl ColValue {
             }
             ColValue::Null => {
                 // IT should be zeroed out by default
+            }
+        }
+    }
+
+    pub fn deserialize(buf: &[u8], dt: DataType, is_null: bool) -> Result<Self, DeserializeError> {
+        if is_null {
+            return Ok(Self::Null);
+        }
+
+        match dt {
+            DataType::Integer => {
+                let arr: [u8; 8] = buf[..8].try_into().map_err(|_| {
+                    DeserializeError::InavlidFormat("Integer column requires 8 bytes".into())
+                })?;
+
+                Ok(ColValue::Int(i64::from_le_bytes(arr)))
+            }
+
+            DataType::Float => {
+                let arr: [u8; 8] = buf[..8].try_into().map_err(|_| {
+                    DeserializeError::InavlidFormat("Float column requires 8 bytes".into())
+                })?;
+
+                Ok(ColValue::Float(f64::from_le_bytes(arr)))
+            }
+
+            DataType::Bool => Ok(ColValue::Bool(buf[0] == 1)),
+
+            DataType::String => {
+                if buf.len() < 64 + 8 {
+                    return Err(DeserializeError::InavlidFormat(
+                        "Colvalus::Text - Buffer is too short".into(),
+                    ));
+                }
+
+                let len = buf[64];
+                if len as usize > 64 {
+                    return Err(DeserializeError::InavlidFormat(format!(
+                        "Colvalue::TExt- inline length {len} > Maximum inline length of 64 ",
+                    )));
+                }
+
+                let mut inline = Box::new([0u8; 64]);
+                inline.copy_from_slice(&buf[..64]);
+
+                let mut ov = [0u8; 8];
+                ov[..7].copy_from_slice(&buf[65..72]);
+
+                // The Null page has the sentinel of all 7 bytes being FF
+                // highest byte will always be 00 by design
+                let overflow = if PageId::from_le_bytes(ov) == 0x00FF_FFFF_FFFF_FFFF {
+                    NULL_PAGE
+                } else {
+                    PageId::from_le_bytes(ov)
+                };
+
+                Ok(ColValue::Text {
+                    inline,
+                    len,
+                    overflow,
+                })
             }
         }
     }

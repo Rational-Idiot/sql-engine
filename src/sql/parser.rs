@@ -938,11 +938,6 @@ fn token_desc(t: &Token) -> &'static str {
 // Thank you ChatGPT for the Test Suite :yum
 #[cfg(test)]
 mod tests {
-    use crate::sql::{
-        ast::*,
-        lex::{Lex, Token},
-        parser::Parser,
-    };
     #[test]
     fn parse_select() {
         use crate::sql::ast::*;
