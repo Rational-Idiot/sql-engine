@@ -23,3 +23,7 @@ A powerful sql compliant database that has git-like version control for all your
 ## Features that I will implement some day
 
 - Views
+
+### Dev Docs
+
+Active file - Node.rs and b+tree sub dir
