@@ -537,3 +537,18 @@ impl LeafVal {
         })
     }
 }
+
+pub struct LeafNode {
+    pub right_sibling: PageId,
+    /// first row_id of right sibling
+    /// happen concurrently, example -
+    /// [10, 20, 30, 40] splits into
+    /// A [10, 20] high_key = 30
+    /// B [30, 40] high_key +inf
+    /// Now if an old instance redirects the search to A for 35 then we can know that 35 belongs to
+    /// the right sibling and therefore the search does not fail outright
+    ///
+    /// Derived from Lehman-Yao B-link trees
+    pub high_key: Key,
+    pub entries: Vec<LeafVal>,
+}
