@@ -15,7 +15,7 @@ use std::{
 // [32..40] page_count:      u64
 // [40..]   reserved / zeroed
 
-const MAGIC: u64 = 0x4442_5452_4545_0001; // "DBTREE\0\1" in hex
+const MAGIC: u64 = u64::from_le_bytes(*b"Chronicl");
 const VERSION: u32 = 1;
 
 // Free-list page layout
@@ -176,7 +176,7 @@ impl DiskManager {
             self.page_count += 1;
 
             let mut buf = [0u8; PAGE_SIZE];
-            buf[0] = Pagetag::FREELIST;
+            buf[0] = Pagetag::FREELIST as u8;
             buf[1..5].copy_from_slice(&(chunk.len() as u32).to_le_bytes());
             buf[5..13].copy_from_slice(&head.to_le_bytes());
 

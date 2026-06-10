@@ -679,7 +679,7 @@ impl LeafNode {
     }
 
     pub fn insert(&mut self, entry: LeafVal, schema: &[Column]) -> Result<(), StorageError> {
-        if self.entries.len() > Self::max_entries(schema) {
+        if self.entries.len() >= Self::max_entries(schema) {
             return Err(StorageError::FullPage);
         }
 
