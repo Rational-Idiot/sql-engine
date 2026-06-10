@@ -1,12 +1,3 @@
-// Keys
-// Disk encoding: fixed KEY_SIZE = 9 bytes
-//   byte 0:    discriminant (0=Int, 1=Float, 2=Bool, 3=Text)
-//   bytes 1-8: payload
-//     Int   - i64 little-endian
-//     Float - f64 little-endian
-//     Bool  - 0x00 or 0x01, rest zeroed
-//     Text  - first 8 UTF-8 bytes, zero-padded
-
 use core::fmt;
 use std::{cmp::Ordering, fmt::Display, str::from_utf8};
 
@@ -34,13 +25,41 @@ impl Ord for F64Key {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+// Key - [tag: 1][payload: 8]
+//
+// The tag identifies the key variant and determines how the payload is
+// interpreted
+// Int and Float keys are in little endian
+// Bool keys store 0x00 for false or 0x01 for true. The remaining payload
+// bytes are zeroed
+// Text keys store the first 8 UTF-8 bytes of the string and pad any unused
+// bytes with zeros
+// Inf is a sentinel key represented by tag 0xFF and has no payload
+#[derive(Debug, Clone)]
 pub enum Key {
     Int(i64),
-    Float(F64Key),
+    Float(f64),
     Bool(bool),
     Text(String),
+
+    // A sentinel value always greater than real keys with
+    Inf,
 }
+
+impl PartialEq for Key {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Key::Int(a), Key::Int(b)) => a == b,
+            (Key::Float(a), Key::Float(b)) => a.total_cmp(b) == Ordering::Equal,
+            (Key::Bool(a), Key::Bool(b)) => a == b,
+            (Key::Text(a), Key::Text(b)) => a == b,
+            (Key::Inf, Key::Inf) => true,
+            _ => false,
+        }
+    }
+}
+
+impl Eq for Key {}
 
 impl PartialOrd for Key {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
@@ -51,8 +70,12 @@ impl PartialOrd for Key {
 impl Ord for Key {
     fn cmp(&self, other: &Self) -> Ordering {
         match (self, other) {
+            (Key::Inf, Key::Inf) => Ordering::Equal,
+            (_, Key::Inf) => Ordering::Less,
+            (Key::Inf, _) => Ordering::Greater,
+
             (Key::Int(a), Key::Int(b)) => a.cmp(b),
-            (Key::Float(a), Key::Float(b)) => a.cmp(b),
+            (Key::Float(a), Key::Float(b)) => a.total_cmp(b),
             (Key::Bool(a), Key::Bool(b)) => a.cmp(b),
             (Key::Text(a), Key::Text(b)) => a.cmp(b),
             _ => panic!("compared keys of different types"),
@@ -71,7 +94,7 @@ impl Key {
 
             Key::Float(f) => {
                 buf[0] = 1;
-                buf[1..9].copy_from_slice(&f.0.to_le_bytes());
+                buf[1..9].copy_from_slice(&f.to_le_bytes());
             }
 
             Key::Bool(b) => {
@@ -85,6 +108,11 @@ impl Key {
                 let n = bytes.len().min(8);
                 buf[1..1 + n].copy_from_slice(&bytes[..n]);
             }
+
+            Key::Inf => {
+                buf[0] = 0xFF;
+                //No Payload for sentinel key
+            }
         }
         buf
     }
@@ -95,7 +123,7 @@ impl Key {
             .expect("The payload should always be 8 bytes");
         match buf[0] {
             0 => Ok(Key::Int(i64::from_le_bytes(payload))),
-            1 => Ok(Key::Float(F64Key(f64::from_le_bytes(payload)))),
+            1 => Ok(Key::Float(f64::from_le_bytes(payload))),
             2 => Ok(Key::Bool(buf[1] == 1)),
             3 => {
                 let end = payload.iter().position(|&b| b == 0).unwrap_or(8);
@@ -105,6 +133,7 @@ impl Key {
 
                 Ok(Key::Text(text.to_owned()))
             }
+            0xFF => Ok(Key::Inf),
             t => panic!("Invalid key tag: {t:#x}"),
         }
     }
@@ -543,7 +572,7 @@ impl LeafVal {
 // The Tag specifies it to be a LeafNode to distinguish from internal nodes
 // The padding aligns the right sibling pointer to a 4 byte and rounds the struct to 20 instead of 19
 // right sibling carries the PageID or NULL_PAGE if rightmost
-// high key contains the row_id of the least value of right sibling
+// high key contains the smallesst key of the right sibling
 pub struct LeafNode {
     pub right_sibling: PageId,
     // first row_id of right sibling
@@ -557,4 +586,14 @@ pub struct LeafNode {
     // Derived from Lehman-Yao B-link trees - https://www.cs.utexas.edu/~dsb/cs386d/Readings/ConcurrencyControl/Lehman-Yao.pdf
     pub high_key: Key,
     pub entries: Vec<LeafVal>,
+}
+
+impl LeafNode {
+    pub fn new() -> Self {
+        Self {
+            right_sibling: NULL_PAGE,
+            high_key: Key::Inf,
+            entries: Vec::new(),
+        }
+    }
 }
