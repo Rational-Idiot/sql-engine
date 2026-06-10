@@ -11,6 +11,7 @@ use core::fmt;
 use std::{cmp::Ordering, fmt::Display, str::from_utf8};
 
 use crate::{
+    catalog::Column,
     sql::ast::DataType,
     storage::page::{NULL_PAGE, PAGE_SIZE, PageId, tag},
 };
@@ -88,7 +89,7 @@ impl Key {
         buf
     }
 
-    pub fn deseriablize(buf: [u8; KEY_SIZE]) -> Result<Self, DeserializeError> {
+    pub fn deseriablize(buf: [u8; KEY_SIZE]) -> Result<Self, StorageError> {
         let payload = buf[1..9]
             .try_into()
             .expect("The payload should always be 8 bytes");
@@ -99,7 +100,7 @@ impl Key {
             3 => {
                 let end = payload.iter().position(|&b| b == 0).unwrap_or(8);
                 let text = from_utf8(&payload[..end]).map_err(|e| {
-                    DeserializeError::InavlidFormat(format!("invalid UTF-8 in text key: {e}"))
+                    StorageError::InavlidFormat(format!("invalid UTF-8 in text key: {e}"))
                 })?;
 
                 Ok(Key::Text(text.to_owned()))
@@ -110,19 +111,24 @@ impl Key {
 }
 
 #[derive(Debug)]
-pub enum DeserializeError {
+pub enum StorageError {
     InavlidFormat(String),
     InvalidCall(String, String),
     AllocationError(String),
+    /// Expected, Got
+    SizeMismatch(usize, usize),
 }
 
-impl Display for DeserializeError {
+impl Display for StorageError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            DeserializeError::InavlidFormat(s) => write!(f, "Invalid Conversion: {s}"),
-            DeserializeError::AllocationError(s) => write!(f, "Allocation Error: {s}"),
-            DeserializeError::InvalidCall(fun, t) => {
+            StorageError::InavlidFormat(s) => write!(f, "Invalid Conversion: {s}"),
+            StorageError::AllocationError(s) => write!(f, "Allocation Error: {s}"),
+            StorageError::InvalidCall(fun, t) => {
                 write!(f, "Called function: {fun} with invalid type: {t}")
+            }
+            StorageError::SizeMismatch(a, b) => {
+                write!(f, "Expected buffer to be {} long but is only {} long", a, b)
             }
         }
     }
@@ -174,7 +180,7 @@ impl InternalNode {
         buf
     }
 
-    pub fn deserialize(buf: &[u8; PAGE_SIZE]) -> Result<Self, DeserializeError> {
+    pub fn deserialize(buf: &[u8; PAGE_SIZE]) -> Result<Self, StorageError> {
         let n = u16::from_le_bytes(
             buf[1..3]
                 .try_into()
@@ -241,7 +247,7 @@ impl ColValue {
         }
     }
 
-    pub fn deserialize(buf: &[u8], dt: DataType, is_null: bool) -> Result<Self, DeserializeError> {
+    pub fn deserialize(buf: &[u8], dt: &DataType, is_null: bool) -> Result<Self, StorageError> {
         if is_null {
             return Ok(Self::Null);
         }
@@ -249,7 +255,7 @@ impl ColValue {
         match dt {
             DataType::Integer => {
                 let arr: [u8; 8] = buf[..8].try_into().map_err(|_| {
-                    DeserializeError::InavlidFormat("Integer column requires 8 bytes".into())
+                    StorageError::InavlidFormat("Integer column requires 8 bytes".into())
                 })?;
 
                 Ok(ColValue::Int(i64::from_le_bytes(arr)))
@@ -257,7 +263,7 @@ impl ColValue {
 
             DataType::Float => {
                 let arr: [u8; 8] = buf[..8].try_into().map_err(|_| {
-                    DeserializeError::InavlidFormat("Float column requires 8 bytes".into())
+                    StorageError::InavlidFormat("Float column requires 8 bytes".into())
                 })?;
 
                 Ok(ColValue::Float(f64::from_le_bytes(arr)))
@@ -267,14 +273,14 @@ impl ColValue {
 
             DataType::String => {
                 if buf.len() < 64 + 8 {
-                    return Err(DeserializeError::InavlidFormat(
+                    return Err(StorageError::InavlidFormat(
                         "Colvalus::Text - Buffer is too short".into(),
                     ));
                 }
 
                 let len = buf[64];
                 if len as usize > 64 {
-                    return Err(DeserializeError::InavlidFormat(format!(
+                    return Err(StorageError::InavlidFormat(format!(
                         "Colvalue::TExt- inline length {len} > Maximum inline length of 64 ",
                     )));
                 }
@@ -302,9 +308,9 @@ impl ColValue {
         }
     }
 
-    pub fn text_value<F>(&self, mut get_bytes: F) -> Result<String, DeserializeError>
+    pub fn text_value<F>(&self, mut get_bytes: F) -> Result<String, StorageError>
     where
-        F: FnMut(PageId) -> Result<Vec<u8>, DeserializeError>,
+        F: FnMut(PageId) -> Result<Vec<u8>, StorageError>,
     {
         match self {
             ColValue::Text {
@@ -321,30 +327,39 @@ impl ColValue {
                     nxt = chain_nxt;
                 }
                 String::from_utf8(bytes).map_err(|e| {
-                    DeserializeError::InavlidFormat(format!(
+                    StorageError::InavlidFormat(format!(
                         "ColValue::text_value : inavlid UTF-8 - {e}"
                     ))
                 })
             }
 
-            ColValue::Null => Err(DeserializeError::InvalidCall(
+            ColValue::Null => Err(StorageError::InvalidCall(
                 "ColValue::text_value".into(),
                 "Null".into(),
             )),
 
-            _ => Err(DeserializeError::InvalidCall(
+            _ => Err(StorageError::InvalidCall(
                 "ColValue::text_value".into(),
                 "Non-Text".into(),
             )),
+        }
+    }
+
+    pub fn size(dt: &DataType) -> usize {
+        match dt {
+            DataType::Integer => 8,
+            DataType::Float => 8,
+            DataType::Bool => 1,
+            DataType::String => 64 + 8,
         }
     }
 }
 
 // Overflow Page - [tag: 1][nxt: 8][len: 4][data: till PAGE_SIZE - 13]
 
-pub fn build_overflow_page(next: PageId, data: &[u8]) -> Result<[u8; PAGE_SIZE], DeserializeError> {
+pub fn build_overflow_page(next: PageId, data: &[u8]) -> Result<[u8; PAGE_SIZE], StorageError> {
     if data.len() > PAGE_SIZE - 13 {
-        return Err(DeserializeError::InavlidFormat(format!(
+        return Err(StorageError::InavlidFormat(format!(
             "Overflow Page: data : {} exceeds maximum: {}",
             data.len(),
             PAGE_SIZE - 13
@@ -365,13 +380,13 @@ pub fn build_overflow_page(next: PageId, data: &[u8]) -> Result<[u8; PAGE_SIZE],
 pub fn build_overflow_chain<F>(
     data: &[u8],
     mut allocate: F,
-) -> Result<(PageId, Vec<(PageId, [u8; PAGE_SIZE])>), DeserializeError>
+) -> Result<(PageId, Vec<(PageId, [u8; PAGE_SIZE])>), StorageError>
 where
     F: FnMut() -> Result<PageId, String>,
 {
     let chunks: Vec<&[u8]> = data.chunks(PAGE_SIZE - 13).collect();
     if chunks.is_empty() {
-        return Err(DeserializeError::InavlidFormat(
+        return Err(StorageError::InavlidFormat(
             "Build Overflow Chain: empty data".into(),
         ));
     }
@@ -380,7 +395,7 @@ where
     let ids: Vec<PageId> = (0..chunks.len())
         .map(|_| allocate())
         .collect::<Result<_, _>>()
-        .map_err(DeserializeError::AllocationError)?;
+        .map_err(StorageError::AllocationError)?;
 
     let pages: Vec<(PageId, [u8; PAGE_SIZE])> = ids
         .iter()
@@ -396,21 +411,21 @@ where
             let page = build_overflow_page(next, chunk)?;
             Ok((id, page))
         })
-        .collect::<Result<_, DeserializeError>>()?;
+        .collect::<Result<_, StorageError>>()?;
 
     Ok((ids[0], pages))
 }
 
-pub fn parse_overflow(page: &[u8]) -> Result<(PageId, &[u8]), DeserializeError> {
+pub fn parse_overflow(page: &[u8]) -> Result<(PageId, &[u8]), StorageError> {
     // tag + next (8 bytes) + len (4 bytes)
     if page.len() < 1 + 8 + 4 {
-        return Err(DeserializeError::InavlidFormat(
+        return Err(StorageError::InavlidFormat(
             "Overflow page too short".into(),
         ));
     }
 
     if page[0] != tag::OVERFLOW {
-        return Err(DeserializeError::InavlidFormat(format!(
+        return Err(StorageError::InavlidFormat(format!(
             "Overflow Page: bad tag 0x{:02X}",
             page[0]
         )));
@@ -419,10 +434,106 @@ pub fn parse_overflow(page: &[u8]) -> Result<(PageId, &[u8]), DeserializeError> 
     let nxt = PageId::from_le_bytes(page[1..9].try_into().unwrap());
     let len = u32::from_le_bytes(page[9..13].try_into().unwrap()) as usize;
     if page.len() < 13 + len {
-        return Err(DeserializeError::InavlidFormat(format!(
+        return Err(StorageError::InavlidFormat(format!(
             "Overflow page: len {len} is greater than page boundary"
         )));
     }
 
     Ok((nxt, &page[13..13 + len]))
+}
+
+// Leaval - [tombstone: 1][row_id: 8] then each column in order - if nullable [null flag: 1]
+// 0x00 = live, 0x01 = null
+// [col values]
+pub struct LeafVal {
+    pub tombstone: bool,
+    pub row_id: u64,
+    pub values: Vec<ColValue>,
+}
+
+impl LeafVal {
+    pub fn size(schema: &[Column]) -> usize {
+        // tombstone + row_id
+        let mut sz = 1 + 8;
+        for col in schema {
+            if col.nullable {
+                sz += 1;
+            }
+
+            sz += ColValue::size(&col.data_type);
+        }
+
+        sz
+    }
+
+    pub fn serialize(&self, buf: &mut [u8], schema: &[Column]) -> Result<(), StorageError> {
+        //buf must be exactly the size of schema
+        if self.values.len() != schema.len() {
+            return Err(StorageError::SizeMismatch(self.values.len(), schema.len()));
+        }
+
+        let expected = Self::size(schema);
+        if buf.len() != expected {
+            return Err(StorageError::SizeMismatch(expected, buf.len()));
+        }
+
+        // Zero out hte buffers
+        buf.fill(0);
+
+        let mut off = 0;
+        buf[off] = self.tombstone as u8;
+        off += 1;
+
+        buf[off..off + 8].copy_from_slice(&self.row_id.to_le_bytes());
+        off += 8;
+
+        for (col, val) in schema.iter().zip(self.values.iter()) {
+            let sz = ColValue::size(&col.data_type);
+            if col.nullable {
+                buf[off] = matches!(val, ColValue::Null) as u8;
+                off += 1;
+            }
+
+            val.serialize(&mut buf[off..off + sz]);
+            off += sz;
+        }
+
+        Ok(())
+    }
+
+    pub fn deserialize(buf: &[u8], schema: &[Column]) -> Result<Self, StorageError> {
+        let expected = Self::size(schema);
+        if buf.len() < expected {
+            return Err(StorageError::SizeMismatch(expected, buf.len()));
+        }
+
+        let mut off = 1;
+        let tombstone = buf[off] != 0;
+        off += 1;
+
+        let row_id: u64 = u64::from_le_bytes(buf[off..off + 8].try_into().unwrap());
+        off += 8;
+
+        let mut values: Vec<ColValue> = Vec::with_capacity(schema.len());
+        for col in schema {
+            let sz = ColValue::size(&col.data_type);
+            let null = if col.nullable {
+                let flag = buf[off] != 0;
+                off += 1;
+                flag
+            } else {
+                false
+            };
+
+            let val = ColValue::deserialize(&buf[off..off + sz], &col.data_type, null)?;
+            values.push(val);
+            off += sz;
+        }
+
+        Ok(Self {
+            tombstone,
+            row_id,
+            values,
+        })
+    }
 }

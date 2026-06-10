@@ -26,4 +26,4 @@ A powerful sql compliant database that has git-like version control for all your
 
 ### Dev Docs
 
-Active file - Node.rs and b+tree sub dir
+Active file - Node.rs and storage sub dir
