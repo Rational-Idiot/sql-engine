@@ -147,6 +147,9 @@ pub enum StorageError {
     /// Expected, Got
     SizeMismatch(usize, usize),
     WrongTag(Pagetag, Pagetag),
+    FullPage,
+    DuplicateRow,
+    RowNotFound(u64),
 }
 
 impl Display for StorageError {
@@ -158,11 +161,14 @@ impl Display for StorageError {
                 write!(f, "Called function: {fun} with invalid type: {t}")
             }
             StorageError::SizeMismatch(a, b) => {
-                write!(f, "Expected buffer to be {} long but is only {} long", a, b)
+                write!(f, "Expected buffer to be {a} long but is only {b} long")
             }
             StorageError::WrongTag(e, t) => {
-                write!(f, "Expected the Tag to be {} but found {}", e, t)
+                write!(f, "Expected the Tag to be {e} but found {t}")
             }
+            StorageError::FullPage => write!(f, "The Page is full and cannot hold more entries"),
+            StorageError::DuplicateRow => write!(f, "The same row_id already exists"),
+            StorageError::RowNotFound(r) => write!(f, "The row {r} does not exist"),
         }
     }
 }
@@ -670,5 +676,72 @@ impl LeafNode {
             high_key,
             entries,
         })
+    }
+
+    pub fn insert(&mut self, entry: LeafVal, schema: &[Column]) -> Result<(), StorageError> {
+        if self.entries.len() > Self::max_entries(schema) {
+            return Err(StorageError::FullPage);
+        }
+
+        // TO insert in a sorted order;
+        let pos = self.entries.partition_point(|e| e.row_id < entry.row_id);
+        if pos < self.entries.len() && entry.row_id == self.entries[pos].row_id {
+            return Err(StorageError::DuplicateRow);
+        }
+        self.entries.insert(pos, entry);
+
+        Ok(())
+    }
+
+    pub fn delete(&mut self, row_id: u64) -> Result<(), StorageError> {
+        match self.entries.binary_search_by_key(&row_id, |e| e.row_id) {
+            Ok(idx) => {
+                self.entries[idx].tombstone = true;
+                Ok(())
+            }
+
+            Err(_) => Err(StorageError::RowNotFound(row_id)),
+        }
+    }
+
+    pub fn get(&self, row_id: u64) -> Option<&LeafVal> {
+        match self.entries.binary_search_by_key(&row_id, |e| e.row_id) {
+            Ok(idx) if !self.entries[idx].tombstone => Some(&self.entries[idx]),
+            _ => None,
+        }
+    }
+
+    // It is used when an insert would overflow the page
+    // Produces two leaf nodes where left holds the lower half keys and right holds the upper half keys
+    // The call site must -
+    // Set the right sibling of the left node
+    // update the parent node with the split key
+    // write both nodes to disk with allocated PageIds
+    //
+    // The return value is (left, right, split_key)
+    pub fn split(self) -> (LeafNode, LeafNode, u64) {
+        let mid = self.entries.len() / 2;
+        let split = self.entries[mid].row_id;
+
+        let (le, re) = {
+            let mut all = self.entries;
+            let right = all.split_off(mid);
+            (all, right)
+        };
+
+        let left = LeafNode {
+            // Filled at call site
+            right_sibling: NULL_PAGE,
+            high_key: Key::Int(split as i64),
+            entries: le,
+        };
+
+        let right = LeafNode {
+            right_sibling: self.right_sibling,
+            high_key: self.high_key,
+            entries: re,
+        };
+
+        (left, right, split)
     }
 }
