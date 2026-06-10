@@ -645,6 +645,30 @@ impl LeafNode {
             ));
         }
 
-        todo!()
+        let count = u16::from_le_bytes(page[1..3].try_into().unwrap()) as usize;
+        let max = Self::max_entries(schema);
+
+        if count > max {
+            return Err(StorageError::SizeMismatch(count, max));
+        }
+
+        let right_sibling = PageId::from_le_bytes(page[4..12].try_into().unwrap());
+        let high_key = Key::deseriablize(page[12..21].try_into().unwrap())?;
+
+        let mut entries: Vec<LeafVal> = Vec::with_capacity(count);
+
+        let sz = LeafVal::size(schema);
+        let mut off = 20;
+        for _ in 0..count {
+            let entry = LeafVal::deserialize(&page[off..off + sz], schema)?;
+            entries.push(entry);
+            off += sz;
+        }
+
+        Ok(Self {
+            right_sibling,
+            high_key,
+            entries,
+        })
     }
 }
