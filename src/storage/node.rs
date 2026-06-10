@@ -538,17 +538,23 @@ impl LeafVal {
     }
 }
 
+// LeafNode - [tag :1][entry count: 2][pad: 1][right sibling: 8][high key: 8] then each LeafVal in order
+//
+// The Tag specifies it to be a LeafNode to distinguish from internal nodes
+// The padding aligns the right sibling pointer to a 4 byte and rounds the struct to 20 instead of 19
+// right sibling carries the PageID or NULL_PAGE if rightmost
+// high key contains the row_id of the least value of right sibling
 pub struct LeafNode {
     pub right_sibling: PageId,
-    /// first row_id of right sibling
-    /// happen concurrently, example -
-    /// [10, 20, 30, 40] splits into
-    /// A [10, 20] high_key = 30
-    /// B [30, 40] high_key +inf
-    /// Now if an old instance redirects the search to A for 35 then we can know that 35 belongs to
-    /// the right sibling and therefore the search does not fail outright
-    ///
-    /// Derived from Lehman-Yao B-link trees
+    // first row_id of right sibling
+    // happen concurrently, example -
+    // [10, 20, 30, 40] splits into
+    // A [10, 20] high_key = 30
+    // B [30, 40] high_key +inf
+    // Now if an old instance redirects the search to A for 35 then we can know that 35 belongs to
+    // the right sibling and therefore the search does not fail outright
+    //
+    // Derived from Lehman-Yao B-link trees - https://www.cs.utexas.edu/~dsb/cs386d/Readings/ConcurrencyControl/Lehman-Yao.pdf
     pub high_key: Key,
     pub entries: Vec<LeafVal>,
 }
