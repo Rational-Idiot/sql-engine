@@ -1,5 +1,5 @@
 #![allow(dead_code)]
-use crate::storage::page::{NULL_PAGE, PAGE_SIZE, PageId, tag};
+use crate::storage::page::{NULL_PAGE, PAGE_SIZE, PageId, Pagetag};
 use std::{
     fs::{File, OpenOptions},
     io::{self, Read, Seek, SeekFrom, Write},
@@ -176,7 +176,7 @@ impl DiskManager {
             self.page_count += 1;
 
             let mut buf = [0u8; PAGE_SIZE];
-            buf[0] = tag::FREELIST;
+            buf[0] = Pagetag::FREELIST;
             buf[1..5].copy_from_slice(&(chunk.len() as u32).to_le_bytes());
             buf[5..13].copy_from_slice(&head.to_le_bytes());
 

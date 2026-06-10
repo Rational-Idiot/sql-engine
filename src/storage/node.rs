@@ -4,7 +4,7 @@ use std::{cmp::Ordering, fmt::Display, str::from_utf8};
 use crate::{
     catalog::Column,
     sql::ast::DataType,
-    storage::page::{NULL_PAGE, PAGE_SIZE, PageId, tag},
+    storage::page::{NULL_PAGE, PAGE_SIZE, PageId, Pagetag},
 };
 
 pub const KEY_SIZE: usize = 9;
@@ -146,6 +146,7 @@ pub enum StorageError {
     AllocationError(String),
     /// Expected, Got
     SizeMismatch(usize, usize),
+    WrongTag(Pagetag, Pagetag),
 }
 
 impl Display for StorageError {
@@ -158,6 +159,9 @@ impl Display for StorageError {
             }
             StorageError::SizeMismatch(a, b) => {
                 write!(f, "Expected buffer to be {} long but is only {} long", a, b)
+            }
+            StorageError::WrongTag(e, t) => {
+                write!(f, "Expected the Tag to be {} but found {}", e, t)
             }
         }
     }
@@ -195,7 +199,7 @@ impl InternalNode {
 
     pub fn serialize(&self) -> [u8; PAGE_SIZE] {
         let mut buf = [0u8; PAGE_SIZE];
-        buf[0] = tag::INTERNAL;
+        buf[0] = Pagetag::INTERNAL as u8;
         buf[1..3].copy_from_slice(&(self.keys.len() as u16).to_le_bytes());
 
         for (i, key) in self.keys.iter().enumerate() {
@@ -395,7 +399,7 @@ pub fn build_overflow_page(next: PageId, data: &[u8]) -> Result<[u8; PAGE_SIZE],
         )));
     }
     let mut page = [0u8; PAGE_SIZE];
-    page[0] = tag::OVERFLOW;
+    page[0] = Pagetag::OVERFLOW as u8;
     page[1..9].copy_from_slice(&next.to_le_bytes());
     page[9..13].copy_from_slice(&data.len().to_le_bytes());
     page[13..13 + data.len()].copy_from_slice(data);
@@ -453,7 +457,7 @@ pub fn parse_overflow(page: &[u8]) -> Result<(PageId, &[u8]), StorageError> {
         ));
     }
 
-    if page[0] != tag::OVERFLOW {
+    if page[0] != Pagetag::OVERFLOW as u8 {
         return Err(StorageError::InavlidFormat(format!(
             "Overflow Page: bad tag 0x{:02X}",
             page[0]
@@ -570,7 +574,7 @@ impl LeafVal {
 // LeafNode - [tag :1][entry count: 2][pad: 1][right sibling: 8][high key: 8] then each LeafVal in order
 //
 // The Tag specifies it to be a LeafNode to distinguish from internal nodes
-// The padding aligns the right sibling pointer to a 4 byte and rounds the struct to 20 instead of 19
+// The padding aligns the right sibling pointer to a 4 byte and rounds the struct to 20 instead of 19, always 0
 // right sibling carries the PageID or NULL_PAGE if rightmost
 // high key contains the smallesst key of the right sibling
 pub struct LeafNode {
@@ -595,5 +599,52 @@ impl LeafNode {
             high_key: Key::Inf,
             entries: Vec::new(),
         }
+    }
+
+    fn max_entries(schema: &[Column]) -> usize {
+        let sz = LeafVal::size(schema);
+        if sz == 0 {
+            return 0;
+        }
+
+        // 20 is the size of the header
+        (PAGE_SIZE - 20) / sz
+    }
+
+    // Requires the schema so the entry size can be calculated
+    pub fn serialize(&self, schema: &[Column]) -> Result<[u8; PAGE_SIZE], StorageError> {
+        let max = Self::max_entries(schema);
+
+        if self.entries.len() > max {
+            return Err(StorageError::SizeMismatch(self.entries.len(), max));
+        }
+
+        let sz = LeafVal::size(schema);
+        let mut page = [0u8; PAGE_SIZE];
+
+        page[0] = Pagetag::LEAF as u8;
+        page[1..3].copy_from_slice(&sz.to_le_bytes());
+        // page[3] is pad and should be default 0
+        page[4..12].copy_from_slice(&self.right_sibling.to_le_bytes());
+        page[12..21].copy_from_slice(&self.high_key.serialize());
+
+        let mut off = 20;
+        for entry in &self.entries {
+            entry.serialize(&mut page[off..off + sz], schema)?;
+            off += sz;
+        }
+
+        Ok(page)
+    }
+
+    pub fn deserialize(page: &[u8; PAGE_SIZE], schema: &[Column]) -> Result<Self, StorageError> {
+        if page[0] != Pagetag::LEAF as u8 {
+            return Err(StorageError::WrongTag(
+                Pagetag::LEAF,
+                Pagetag::get_tag(page[0]).unwrap(),
+            ));
+        }
+
+        todo!()
     }
 }
