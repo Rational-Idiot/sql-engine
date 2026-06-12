@@ -13,7 +13,7 @@ A powerful sql compliant database that has git-like version control for all your
 - [ ] Make a COW B+Link Implementation
   - [x] implement paging
   - [x] structure the nodes
-  - [ ] Decide the serialization architecute
+  - [x] Decide the serialization architecute
   - [ ] Make the B+Link Tree
 - [ ] Build the Actual Engine
 - [ ] Build the version control layer
@@ -26,4 +26,4 @@ A powerful sql compliant database that has git-like version control for all your
 
 ### Dev Docs
 
-Active file - Node.rs and storage sub dir
+Active file - Finally onto the B+tree

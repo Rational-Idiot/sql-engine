@@ -6,15 +6,6 @@ use std::{
     path::Path,
 };
 
-// Header Layout
-// [0..8]   magic:           u64
-// [8..12]  version:         u32
-// [12..16] page_size:       u32
-// [16..24] commit_root:     PageId
-// [24..32] free_head:       PageId of head free-list
-// [32..40] page_count:      u64
-// [40..]   reserved / zeroed
-
 const MAGIC: u64 = u64::from_le_bytes(*b"Chronicl");
 const VERSION: u32 = 1;
 
@@ -30,11 +21,16 @@ fn page_offset(id: PageId) -> u64 {
     id * PAGE_SIZE as u64
 }
 
+// Header of any file - [magic: 8][version: 4][page size: 4][commit root: 8]
+//                       [free head: 8][page count: 8][next row id: 8]
+//  Total 48 bytes
 pub struct DiskManager {
     file: File,
     free_list: Vec<PageId>,
     page_count: u64,
-    commit_root: PageId,
+    pub commit_root: PageId,
+    // Next row id stored in header so it survives reopen
+    next_row: u64,
 }
 
 impl DiskManager {
@@ -61,6 +57,7 @@ impl DiskManager {
         let commit_root = u64::from_le_bytes(buf[16..24].try_into().unwrap());
         let free_head = u64::from_le_bytes(buf[24..32].try_into().unwrap());
         let page_count = u64::from_le_bytes(buf[32..40].try_into().unwrap());
+        let next_row = u64::from_le_bytes(buf[40..48].try_into().unwrap());
 
         let free_list = Self::load_fl(&mut file, free_head)?;
         Ok(Self {
@@ -68,6 +65,7 @@ impl DiskManager {
             free_list,
             page_count,
             commit_root,
+            next_row,
         })
     }
 
@@ -103,6 +101,7 @@ impl DiskManager {
             free_list: Vec::new(),
             page_count: 1,
             commit_root: NULL_PAGE,
+            next_row: 1,
         };
 
         dm.write_header(NULL_PAGE)?; // Initial Head
@@ -129,7 +128,7 @@ impl DiskManager {
         Ok(buf)
     }
 
-    fn write_page(&mut self, id: PageId, data: &[u8; PAGE_SIZE]) -> io::Result<()> {
+    pub fn write_page(&mut self, id: PageId, data: &[u8; PAGE_SIZE]) -> io::Result<()> {
         debug_assert!(id != NULL_PAGE, "write NULL_PAGE");
         self.file.seek(SeekFrom::Start(page_offset(id)))?;
         self.file.write_all(data)
@@ -147,6 +146,12 @@ impl DiskManager {
         self.file.seek(SeekFrom::Start(page_offset(id)))?;
         self.file.write_all(&buf)?;
         Ok(id)
+    }
+
+    pub fn next_row_id(&mut self) -> u64 {
+        let id = self.next_row;
+        self.next_row += 1;
+        id
     }
 
     pub fn free_page(&mut self, id: PageId) {

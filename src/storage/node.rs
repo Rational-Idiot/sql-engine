@@ -491,6 +491,14 @@ pub struct LeafVal {
 }
 
 impl LeafVal {
+    pub fn new(row_id: u64, values: Vec<ColValue>) -> Self {
+        Self {
+            tombstone: false,
+            row_id,
+            values,
+        }
+    }
+
     pub fn size(schema: &[Column]) -> usize {
         // tombstone + row_id
         let mut sz = 1 + 8;
